@@ -9,9 +9,9 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 # ── Base model ────────────────────────────────────────────────────────────────
 
-class Base(DeclarativeBase):
-    """Shared declarative base — all ORM models inherit from this."""
-    pass
+# class Base(DeclarativeBase):
+#     """Shared declarative base — all ORM models inherit from this."""
+#     pass
 
 
 # ── Connector ─────────────────────────────────────────────────────────────────

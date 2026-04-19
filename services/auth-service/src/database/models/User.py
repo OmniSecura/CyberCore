@@ -1,4 +1,4 @@
-from Base import Base
+from .Base import Base
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import String, Boolean, DateTime, Integer
 from datetime import datetime
@@ -6,7 +6,7 @@ from datetime import datetime
 import uuid
 
 class User(Base):
-    __tablename__ = "user"
+    __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, nullable=False, default=lambda: str(uuid.uuid4())

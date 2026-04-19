@@ -9,19 +9,22 @@ from ...schemas.user import CreateUser
 
 
 
-users_router = APIRouter(prefix="/users", tags=["Users"])
+auth_router = APIRouter(prefix="/users", tags=["Auth"])
 
-@cbv(users_router)
-class UsersRouter:
 
-    def _get_service(self, db: Session = Depends(get_db)) -> UserService:
-        """Wires the session from get_db into the service."""
-        return UserService(db)
+def _get_service(db: Session = Depends(get_db)) -> UserService:
+    """Wires the session from get_db into the service."""
+    return UserService(db)
 
-    @users_router.post("/", status_code=status.HTTP_201_CREATED)
+
+@cbv(auth_router)
+class AuthRouter:
+
+    @auth_router.post("/", status_code=status.HTTP_201_CREATED)
     def create_user(self, user_data: CreateUser, service: UserService = Depends(_get_service)):
         try:
-            return service.create_user(user_data)
+            service.create_user(user_data)
+            return "Welcome to Cybercore, your account has been created successfully!"
         except Exception as e:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 

@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
-from sqlalchemy.testing.pickleable import User
+from ..database.models.User import User
 from ..schemas import CreateUser
+from ..security.security import PasswordSecurity
 from fastapi import HTTPException
 
 class UserService:
@@ -26,7 +27,7 @@ class UserService:
     def list_users(self, skip: int = 0, limit: int = 50) -> list[type[User]]:
         return (
             self.db.query(User)
-            .filter(User.deleted_at_is_(None))
+            .filter(User.deleted_at.is_(None))
             .offset(skip)
             .limit(limit)
             .all()
@@ -36,12 +37,14 @@ class UserService:
 
     def create_user(self, user_data: CreateUser) -> HTTPException | User:
         if self.get_by_email(user_data.email):
-            return HTTPException(status_code=400, detail="Email already registered")
+            raise ValueError(f"Email already registered: {user_data.email}")
+
+        hashed_password=PasswordSecurity().hash_password(user_data.password)
 
         user = User(
             email=user_data.email,
             full_name=user_data.full_name,
-            password=user_data.password,
+            password_hash=hashed_password,
         )
 
         self.db.add(user)
