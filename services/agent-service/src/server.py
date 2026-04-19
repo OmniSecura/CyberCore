@@ -5,7 +5,6 @@ from starlette.middleware.cors import CORSMiddleware
 from .global_settings import APP_NAME, APP_DESCRIPTION, APP_VERSION, ALLOWED_ORIGINS
 from .routers.api_router import api_router
 from .database.db_connection import engine
-from sqlmodel import SQLModel
 
 def create_app() -> FastAPI:
     app = FastAPI(
@@ -15,8 +14,6 @@ def create_app() -> FastAPI:
         docs_url=None,
         redoc_url=None,
     )
-
-    SQLModel.metadata.create_all(engine)
 
     app.add_middleware(
         CORSMiddleware,
