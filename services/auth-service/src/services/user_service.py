@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 from sqlalchemy.testing.pickleable import User
-
+from ..schemas import CreateUser
+from fastapi import HTTPException
 
 class UserService:
     def __init__(self, db: Session) -> None:
@@ -33,4 +34,16 @@ class UserService:
 
     # ── Mutations ─────────────────────────────────────────────────────────────
 
-    
+    def create_user(self, user_data: CreateUser) -> HTTPException | User:
+        if self.get_by_email(user_data.email):
+            return HTTPException(status_code=400, detail="Email already registered")
+
+        user = User(
+            email=user_data.email,
+            full_name=user_data.full_name,
+            password=user_data.password,
+        )
+
+        self.db.add(user)
+        self.db.commit()
+        return user
