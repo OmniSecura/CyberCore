@@ -20,7 +20,7 @@ def _get_service(db: Session = Depends(get_db)) -> UserService:
 @cbv(auth_router)
 class AuthRouter:
 
-    @auth_router.post("/", status_code=status.HTTP_201_CREATED)
+    @auth_router.post("/register", status_code=status.HTTP_201_CREATED)
     def create_user(self, user_data: CreateUser, service: UserService = Depends(_get_service)):
         try:
             service.create_user(user_data)
