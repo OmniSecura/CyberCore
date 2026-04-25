@@ -24,7 +24,20 @@ class AuthRouter:
     def create_user(self, user_data: CreateUser, service: UserService = Depends(_get_service)):
         try:
             service.create_user(user_data)
-            return "Welcome to Cybercore, your account has been created successfully!"
+            return {"message": "Welcome to Cybercore, your account has been created successfully!"}
         except Exception as e:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    @auth_router.delete("/{user_id}", status_code=status.HTTP_200_OK)
+    def delete_user(
+            self,
+            user_id: str,
+            service: UserService = Depends(_get_service)
+    ):
+        try:
+            return {"message": service.soft_delete_user(user_id)}
+        except LookupError as e:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
 

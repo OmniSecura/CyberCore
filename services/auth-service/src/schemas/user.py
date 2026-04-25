@@ -1,7 +1,7 @@
 from pydantic import BaseModel, EmailStr, field_validator, model_validator
 from ..security.template_matching import (
     validate_email,
-    validate_username,
+    validate_full_name,
     validate_password,
     validate_registration,
 )
