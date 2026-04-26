@@ -175,6 +175,7 @@ class AuthRouter:
     def delete_my_account(
         self,
         request: Request,
+        password: str,
         service: UserService = Depends(_get_service),
         current_user: User = Depends(get_current_user),
     ):
@@ -184,7 +185,7 @@ class AuthRouter:
         Invalidates both tokens immediately on deletion.
         """
         try:
-            service.soft_delete_user(current_user.id)
+            service.soft_delete_user(current_user.id, password=password)
         except LookupError:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
@@ -211,7 +212,7 @@ class AuthRouter:
         Returns only a status message — no user data.
         """
         try:
-            service.soft_delete_user(user_id)
+            service.admin_soft_delete_user(user_id)
             return {"message": "Account deleted"}
         except LookupError:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")

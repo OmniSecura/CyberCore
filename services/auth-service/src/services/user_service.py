@@ -42,6 +42,18 @@ class UserService:
             .all()
         )
 
+    def del_user(self, user: User, password: str):
+        if not user:
+            raise LookupError(f"User not found")
+        if not _pwd.verify_password(user.password_hash, password):
+            raise LookupError(f"Invalid credentials")
+
+        user.deleted_at = datetime.now(timezone.utc)
+        user.is_active  = False
+        self.db.flush()
+        return f"Account has been deactivated"
+
+
     # ── Mutations ─────────────────────────────────────────────────────────────
 
     def create_user(self, user_data: CreateUser) -> str:
@@ -115,7 +127,27 @@ class UserService:
 
         return user
 
-    def soft_delete_user(self, user_id: str) -> str:
+    def soft_delete_user(self, user_id: str, password: str) -> str:
+        """
+        Soft-delete a user by setting deleted_at and deactivating the account.
+
+        Raises:
+            LookupError: If the user does not exist or is already deleted.
+        """
+        user = self.get_by_id(user_id)
+        return self.del_user(user, password)
+
+    def soft_delete_by_email(self, email: str, password: str) -> str:
+        """
+        Soft-delete a user by email — used for user-facing account deletion.
+
+        Raises:
+            LookupError: If the user does not exist.
+        """
+        user = self.get_by_email(email)
+        return self.del_user(user, password)
+
+    def admin_soft_delete_user(self, user_id: str) -> str:
         """
         Soft-delete a user by setting deleted_at and deactivating the account.
 
@@ -130,19 +162,3 @@ class UserService:
         user.is_active  = False
         self.db.flush()
         return f"User {user_id} has been deactivated"
-
-    def soft_delete_by_email(self, email: str) -> str:
-        """
-        Soft-delete a user by email — used for user-facing account deletion.
-
-        Raises:
-            LookupError: If the user does not exist.
-        """
-        user = self.get_by_email(email)
-        if not user:
-            raise LookupError(f"User not found: {email}")
-
-        user.deleted_at = datetime.now(timezone.utc)
-        user.is_active  = False
-        self.db.flush()
-        return f"Account {email} has been deactivated"
