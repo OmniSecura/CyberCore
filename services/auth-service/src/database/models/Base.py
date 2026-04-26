@@ -1,10 +1,12 @@
+# Base.py
 from datetime import datetime
 from sqlalchemy import DateTime, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, DeclarativeBase
 
-from sqlmodel import SQLModel
 
-class Base(SQLModel):
+class Base(DeclarativeBase):
+    __abstract__ = True
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
