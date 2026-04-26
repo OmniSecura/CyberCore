@@ -61,5 +61,6 @@ app = create_app()
 @app.on_event("startup")
 def on_startup() -> None:
     if os.getenv("DB_CREATE_TABLES", "false").lower() == "true":
-        from .database.models.User import User  # noqa: F401
+        from .database.models.User import User          # noqa: F401
+        from .database.models.UserToken import UserToken  # noqa: F401  ← dodaj to
         Base.metadata.create_all(bind=_connector.get_engine())

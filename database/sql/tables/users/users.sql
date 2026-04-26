@@ -118,6 +118,7 @@ CREATE TABLE user_tokens (
     used_at     DATETIME        NULL,   -- NULL means token has not been used yet
 
     created_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at              DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
     PRIMARY KEY (id),
     UNIQUE KEY uq_tokens_hash (token_hash),

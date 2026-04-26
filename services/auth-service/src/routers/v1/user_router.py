@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from ...database.db_connection import get_db
 from ...database.models.User import User
 from ...schemas.user import CreateUser, LoginRequest, UserResponse
+from ...schemas.email import DeleteAccountRequest
 from ...security.JWT import (
     blacklist_from_request_cookies,
     clear_auth_cookies,
@@ -13,19 +14,16 @@ from ...security.JWT import (
     require_superadmin,
     set_auth_cookies,
     _decode_token,
-    _get_jti_and_exp,
-    create_access_token,
-    create_refresh_token,
-    _set_cookie,
-    ACCESS_TOKEN_EXPIRE_MINUTES,
-    REFRESH_TOKEN_EXPIRE_DAYS,
     _REFRESH_COOKIE,
+    set_auth_cookies,
 )
-from ...services.user_service import UserService
-
 from ...security.token_blacklist import blacklist_token
+from ...services.user_service import UserService
+from ...services.email_service import EmailService
 
 auth_router = APIRouter(prefix="/users", tags=["Auth"])
+
+_email_svc = EmailService()
 
 
 def _get_service(db: Session = Depends(get_db)) -> UserService:
@@ -45,18 +43,26 @@ class AuthRouter:
     ):
         """
         Create a new account.
+        Sends a welcome email and an email-verification link.
         Returns only a success message — no user data, no tokens.
-        The user must log in after registering.
+        The user must log in separately after registering.
         """
         try:
-            service.create_user(user_data)
-            return {"message": "Account created successfully"}
+            user, verify_token = service.create_user(user_data)
         except ValueError:
-            # Generic message — do not confirm whether the email exists
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Registration failed",
             )
+
+        # Best-effort — do not fail registration if email delivery fails
+        try:
+            _email_svc.send_welcome(user.email, user.full_name)
+            _email_svc.send_verify_email(user.email, user.full_name, verify_token)
+        except Exception:
+            pass  # log in production
+
+        return {"message": "Account created successfully. Check your email to verify your address."}
 
     # ── Login ─────────────────────────────────────────────────────────────────
 
@@ -68,14 +74,16 @@ class AuthRouter:
     ):
         """
         Authenticate with email + password.
-
-        On success both tokens are written into httpOnly cookies — the client
-        never sees the token values. Response body contains only a status message.
+        Tokens are written into httpOnly cookies — client never sees the values.
         """
         try:
             user = service.authenticate(credentials)
-        except ValueError:
-            # Always the same message — never reveal whether email or password was wrong
+        except ValueError as e:
+            if "not verified" in str(e):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Please verify your email before logging in",
+                )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid credentials",
@@ -91,25 +99,15 @@ class AuthRouter:
     # ── Refresh ───────────────────────────────────────────────────────────────
 
     @auth_router.post("/refresh", status_code=status.HTTP_200_OK)
-    def refresh(
-        self,
-        request: Request,
-        db: Session = Depends(get_db),
-    ):
+    def refresh(self, request: Request, db: Session = Depends(get_db)):
         """
-        Issue a new access token using the refresh token cookie.
-
-        Normally handled automatically by AutoRefreshMiddleware —
-        this endpoint exists as a manual fallback.
-        Returns only a status message. New tokens go into cookies.
+        Issue a new access token using the refresh-token cookie.
+        Normally handled automatically by AutoRefreshMiddleware.
         """
 
         refresh_token = request.cookies.get(_REFRESH_COOKIE)
         if not refresh_token:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Unauthorized",
-            )
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
 
         try:
             payload = _decode_token(refresh_token, expected_type="refresh")
@@ -122,23 +120,15 @@ class AuthRouter:
 
         user = (
             db.query(User)
-            .filter(
-                User.id == user_id,
-                User.is_active == True,
-                User.deleted_at.is_(None),
-            )
+            .filter(User.id == user_id, User.is_active == True, User.deleted_at.is_(None))
             .first()
         )
         if not user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
 
-        # Blacklist the old refresh token (token rotation)
         blacklist_token(old_jti, old_exp)
 
-        response = JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"message": "Token refreshed"},
-        )
+        response = JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Token refreshed"})
         set_auth_cookies(response, user_id)
         return response
 
@@ -146,16 +136,9 @@ class AuthRouter:
 
     @auth_router.post("/logout", status_code=status.HTTP_200_OK)
     def logout(self, request: Request):
-        """
-        Invalidate both tokens and clear the cookies.
-        Response body contains only a status message.
-        """
+        """Invalidate both tokens and clear the cookies."""
         blacklist_from_request_cookies(request)
-
-        response = JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"message": "Logged out"},
-        )
+        response = JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Logged out"})
         clear_auth_cookies(response)
         return response
 
@@ -163,11 +146,35 @@ class AuthRouter:
 
     @auth_router.get("/me", status_code=status.HTTP_200_OK, response_model=UserResponse)
     def get_me(self, current_user: User = Depends(get_current_user)):
-        """
-        Return the current user's profile.
-        UserResponse exposes only safe fields — no password hash, no MFA secret.
-        """
+        """Return the current user's profile (safe fields only)."""
         return current_user
+
+    # ── Resend verification ───────────────────────────────────────────────────
+
+    @auth_router.post("/me/resend-verification", status_code=status.HTTP_200_OK)
+    def resend_verification(
+        self,
+        service: UserService = Depends(_get_service),
+        current_user: User = Depends(get_current_user),
+    ):
+        """
+        Re-send the email-verification link.
+        Returns 400 if the email is already verified.
+        """
+        try:
+            token = service.resend_verification(current_user)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email is already verified",
+            )
+
+        try:
+            _email_svc.send_verify_email(current_user.email, current_user.full_name, token)
+        except Exception:
+            pass
+
+        return {"message": "Verification email sent"}
 
     # ── Delete own account ────────────────────────────────────────────────────
 
@@ -175,26 +182,24 @@ class AuthRouter:
     def delete_my_account(
         self,
         request: Request,
-        password: str,
+        body: DeleteAccountRequest,
         service: UserService = Depends(_get_service),
         current_user: User = Depends(get_current_user),
     ):
         """
         Soft-delete the authenticated user's own account.
-        User ID comes from the cookie token — never from the URL.
-        Invalidates both tokens immediately on deletion.
+        Requires the current password in the request body.
+        Invalidates both tokens immediately.
         """
         try:
-            service.soft_delete_user(current_user.id, password=password)
+            service.soft_delete_user(current_user.id, body.password)
         except LookupError:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
         blacklist_from_request_cookies(request)
-
-        response = JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"message": "Account deleted"},
-        )
+        response = JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Account deleted"})
         clear_auth_cookies(response)
         return response
 
@@ -207,10 +212,7 @@ class AuthRouter:
         service: UserService = Depends(_get_service),
         _: User = Depends(require_superadmin),
     ):
-        """
-        Soft-delete any user by ID. Superadmin only.
-        Returns only a status message — no user data.
-        """
+        """Soft-delete any user by ID. Superadmin only."""
         try:
             service.admin_soft_delete_user(user_id)
             return {"message": "Account deleted"}

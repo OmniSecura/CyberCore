@@ -16,14 +16,18 @@ _REFRESH_COOKIE = "refresh_token"
 
 # Endpoints that never need a valid access token
 _PUBLIC_PATHS = {
-    "/users/login",
-    "/users/register",
-    "/users/refresh",
+    "/v1/users/login",
+    "/v1/users/register",
+    "/v1/users/refresh",
+    "/v1/email/verify",
+    "/v1/email/reset-password/request",
+    "/v1/email/reset-password/confirm",
     "/health",
     "/docs",
     "/openapi.json",
     "/",
 }
+
 
 
 class AutoRefreshMiddleware(BaseHTTPMiddleware):
