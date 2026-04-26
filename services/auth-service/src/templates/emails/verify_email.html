@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Verify your email — {{ app_name }}{% endblock %}
+{% block content %}
+  <p class="eyebrow">Email verification</p>
+  <h1>Confirm your address</h1>
+  <p>Hey <strong>{{ full_name }}</strong>,</p>
+  <p>Thanks for signing up. Click below to verify your email and activate your account. This link expires in <strong>24 hours</strong>.</p>
+  <div class="btn-wrap">
+    <a href="{{ verify_url }}" class="btn">Verify email address</a>
+  </div>
+  <p class="fallback">Button not working? Paste this into your browser:<br><a href="{{ verify_url }}">{{ verify_url }}</a></p>
+  <hr class="divider">
+  <div class="notice">
+    <p>If you didn't create a {{ app_name }} account, ignore this email — no account will be created without verification.</p>
+  </div>
+{% endblock %}

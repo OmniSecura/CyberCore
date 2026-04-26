@@ -1,11 +1,13 @@
-from .Base import Base
-from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import String, Boolean, DateTime, Integer
+import uuid
 from datetime import datetime
 
-import uuid
+from sqlalchemy import String, Boolean, DateTime, Integer
+from sqlalchemy.orm import Mapped, mapped_column
 
-class User(Base):
+from .Base import Base, AuditMixin
+
+
+class User(AuditMixin, Base):
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(
@@ -14,11 +16,10 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    # Null if user register via OAuth only
+    # Null if user registered via OAuth only
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
-
     avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     # Account status

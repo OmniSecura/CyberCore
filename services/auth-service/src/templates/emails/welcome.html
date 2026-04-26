@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Welcome to {{ app_name }}{% endblock %}
+{% block content %}
+  <p class="eyebrow">Welcome aboard</p>
+  <h1>Good to have you, {{ full_name.split()[0] }}.</h1>
+  <p>Your {{ app_name }} account is ready. A few things to get you started:</p>
+  <p><strong>Verify your email</strong> — check your inbox for the verification link we sent. Some features are locked until your address is confirmed.</p>
+  <p><strong>Create or join an organization</strong> — invite your team and start collaborating right away.</p>
+  <p><strong>Generate an API key</strong> — connect your CI/CD pipeline or SDK integration in minutes.</p>
+  <hr class="divider">
+  <div class="btn-wrap">
+    <a href="{{ app_url }}/dashboard" class="btn">Go to dashboard</a>
+  </div>
+  <p style="font-size:13px; color:#44444f; margin-top:24px;">Need help? Reply to this email — we're here.</p>
+{% endblock %}
