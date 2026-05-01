@@ -1,0 +1,45 @@
+const pl = {
+  login_title: 'Zaloguj się',
+  login_sub: 'Witaj z powrotem. Podaj swoje dane aby kontynuować.',
+  email_label: 'Adres email', email_ph: 'ty@firma.pl',
+  pw_label: 'Hasło', pw_ph: '••••••••', forgot: 'Zapomniałem hasła',
+  login_btn: 'Zaloguj się', no_account: 'Nie masz konta?', sign_up: 'Zarejestruj się', or: 'lub',
+
+  reg_title: 'Utwórz konto', reg_sub: 'Dołącz do CyberCore i chroń swoją infrastrukturę.',
+  name_label: 'Imię i nazwisko', name_ph: 'Jan Kowalski',
+  confirm_pw: 'Powtórz hasło', pw_min_ph: 'min. 12 znaków',
+  reg_btn: 'Utwórz konto', have_account: 'Masz już konto?', sign_in: 'Zaloguj się',
+  pw_weak: 'Słabe', pw_medium: 'Średnie', pw_good: 'Dobre', pw_strong: 'Silne',
+  inbox_title: 'Sprawdź skrzynkę!',
+  reg_ok: (e) => `Wysłaliśmy link weryfikacyjny na adres <strong>${e}</strong>.<br/><br/>Kliknij link w mailu aby aktywować konto.`,
+  back_login: 'Wróć do logowania',
+
+  verify_title: 'Weryfikacja emaila', verify_loading: 'Trwa weryfikacja Twojego adresu email…',
+  verify_manual_sub: 'Wklej token weryfikacyjny z wiadomości email.',
+  token_label: 'Token weryfikacyjny', token_ph: 'Wklej token z maila',
+  verify_btn: 'Zweryfikuj email', verify_ok: 'Email zweryfikowany pomyślnie!',
+  verify_fail: 'Link weryfikacyjny jest nieważny lub wygasł.',
+  verified_title: 'Email zweryfikowany!', verified_sub: 'Twoje konto jest aktywne. Możesz się teraz zalogować.',
+  go_login: 'Przejdź do logowania',
+
+  reset_title: 'Resetuj hasło', reset_sub: 'Podaj adres email konta. Wyślemy Ci link do ustawienia nowego hasła.',
+  send_link: 'Wyślij link resetujący',
+  reset_sent_title: 'Sprawdź skrzynkę!',
+  reset_sent: (e) => `Jeśli konto z adresem <strong>${e}</strong> istnieje,<br/>wyślemy link do resetowania hasła.<br/><br/>Link jest ważny przez 1 godzinę.`,
+  new_pw_title: 'Nowe hasło', new_pw_sub: 'Ustaw nowe hasło do swojego konta.',
+  reset_token_label: 'Token resetujący', new_pw_label: 'Nowe hasło', confirm_new_pw: 'Powtórz nowe hasło',
+  set_pw_btn: 'Ustaw nowe hasło',
+  pw_changed_title: 'Hasło zmienione!', pw_changed_sub: 'Twoje hasło zostało zaktualizowane.<br/>Możesz się teraz zalogować.',
+
+  err_email: 'Podaj adres email', err_pw: 'Podaj hasło',
+  err_name: 'Podaj imię i nazwisko', err_pw_min: 'Hasło musi mieć min. 12 znaków',
+  err_pw_match: 'Hasła nie są zgodne', err_token: 'Wklej token z maila',
+  err_creds: 'Nieprawidłowy email lub hasło.', err_locked: 'Konto jest tymczasowo zablokowane. Spróbuj za chwilę.',
+  err_unverified: 'Potwierdź swój adres email przed zalogowaniem.',
+  err_taken: 'Ten adres email jest już zarejestrowany.',
+  err_reg: 'Rejestracja nie powiodła się. Spróbuj ponownie.',
+  err_generic: 'Coś poszło nie tak. Spróbuj ponownie.',
+  err_reset_invalid: 'Link resetujący jest nieważny lub wygasł.',
+}
+
+export default pl

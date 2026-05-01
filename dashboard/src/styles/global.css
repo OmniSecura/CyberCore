@@ -1,0 +1,23 @@
+/* ── Reset ─────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--navy); }
+#root { height: 100%; }
+
+/* ── Design tokens ─────────────────────────────────────────────────────────── */
+:root {
+  --cyan:        #00C2CB;
+  --cyan-dark:   #009EA6;
+  --cyan-light:  #E0FAFA;
+  --blue:        #1A6EF5;
+  --navy:        #0A1628;
+  --slate:       #4A6080;
+  --muted:       #8899AA;
+  --border:      #D6E4F0;
+  --bg:          #F4F8FC;
+  --white:       #FFFFFF;
+  --red:         #E53E3E;
+  --red-light:   #FFF5F5;
+  --green:       #38A169;
+  --green-light: #F0FFF4;
+  --shadow-lg:   0 12px 40px rgba(10,22,40,.13);
+}
