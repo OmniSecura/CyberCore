@@ -25,7 +25,8 @@ cybercore/
 │   ├── dast-service/          # Dynamic Application Security Testing
 │   ├── log-service/           # Centralized log ingestion & API
 │   ├── agent-service/         # Receives data from system agents
-│   └── alert-service/         # Alerting & notification engine
+│   ├── alert-service/          # Alerting & notification engine
+│   └── organization-service/  # Creating/managing organizations and projects
 ├── workers/
 │   ├── scan-worker/           # Celery — runs bandit, semgrep, ZAP
 │   ├── log-consumer/          # Kafka consumer → TimescaleDB
