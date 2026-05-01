@@ -1,0 +1,45 @@
+const en = {
+  login_title: 'Sign in',
+  login_sub: 'Welcome back. Enter your credentials to continue.',
+  email_label: 'Email address', email_ph: 'you@company.com',
+  pw_label: 'Password', pw_ph: '••••••••', forgot: 'Forgot password?',
+  login_btn: 'Sign in', no_account: "Don't have an account?", sign_up: 'Sign up', or: 'or',
+
+  reg_title: 'Create account', reg_sub: 'Join CyberCore and protect your infrastructure.',
+  name_label: 'Full name', name_ph: 'John Smith',
+  confirm_pw: 'Confirm password', pw_min_ph: 'min. 12 characters',
+  reg_btn: 'Create account', have_account: 'Already have an account?', sign_in: 'Sign in',
+  pw_weak: 'Weak', pw_medium: 'Fair', pw_good: 'Good', pw_strong: 'Strong',
+  inbox_title: 'Check your inbox!',
+  reg_ok: (e) => `We sent a verification link to <strong>${e}</strong>.<br/><br/>Click the link to activate your account.`,
+  back_login: 'Back to sign in',
+
+  verify_title: 'Verify email', verify_loading: 'Verifying your email address…',
+  verify_manual_sub: 'Paste the verification token from your email.',
+  token_label: 'Verification token', token_ph: 'Paste token from email',
+  verify_btn: 'Verify email', verify_ok: 'Email verified successfully!',
+  verify_fail: 'Verification link is invalid or has expired.',
+  verified_title: 'Email verified!', verified_sub: 'Your account is active. You can now sign in.',
+  go_login: 'Go to sign in',
+
+  reset_title: 'Reset password', reset_sub: "Enter your account email and we'll send you a reset link.",
+  send_link: 'Send reset link',
+  reset_sent_title: 'Check your inbox!',
+  reset_sent: (e) => `If an account with <strong>${e}</strong> exists,<br/>we'll send a password reset link.<br/><br/>The link is valid for 1 hour.`,
+  new_pw_title: 'New password', new_pw_sub: 'Set a new password for your account.',
+  reset_token_label: 'Reset token', new_pw_label: 'New password', confirm_new_pw: 'Confirm new password',
+  set_pw_btn: 'Set new password',
+  pw_changed_title: 'Password changed!', pw_changed_sub: 'Your password has been updated.<br/>You can now sign in.',
+
+  err_email: 'Please enter your email', err_pw: 'Please enter your password',
+  err_name: 'Please enter your full name', err_pw_min: 'Password must be at least 12 characters',
+  err_pw_match: 'Passwords do not match', err_token: 'Paste the token from your email',
+  err_creds: 'Invalid email or password.', err_locked: 'Account is temporarily locked. Please try again later.',
+  err_unverified: 'Please verify your email before signing in.',
+  err_taken: 'This email address is already registered.',
+  err_reg: 'Registration failed. Please try again.',
+  err_generic: 'Something went wrong. Please try again.',
+  err_reset_invalid: 'Reset link is invalid or has expired.',
+}
+
+export default en

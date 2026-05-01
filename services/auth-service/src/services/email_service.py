@@ -17,7 +17,7 @@ SMTP_USER      = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD  = os.getenv("SMTP_PASSWORD", "")
 MAIL_FROM      = os.getenv("MAIL_FROM", SMTP_USER)
 MAIL_FROM_NAME = os.getenv("MAIL_FROM_NAME", "CyberCore")
-APP_URL        = os.getenv("APP_URL", "http://localhost:8000")
+APP_URL        = os.getenv("APP_URL", "http://localhost:3000")
 
 # Templates live at:  src/templates/emails/
 _TEMPLATES_DIR = Path(__file__).parent.parent / "templates" / "emails"
