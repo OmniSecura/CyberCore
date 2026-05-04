@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import String, Boolean, ForeignKey
+from sqlalchemy import String, Boolean
 from sqlalchemy.orm import Mapped, mapped_column
 from .Base import Base, AuditMixin
 
@@ -11,7 +11,7 @@ class Organization(AuditMixin, Base):
         String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
     owner_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        String(36), nullable=False
     )
     organization_name: Mapped[str] = mapped_column(String(255), nullable=False)
 

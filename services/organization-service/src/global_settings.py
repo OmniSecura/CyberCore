@@ -1,6 +1,6 @@
 import os
 
-APP_NAME        = "AuthService"
+APP_NAME        = "OrganizationService"
 APP_DESCRIPTION = ""
 APP_VERSION     = "0.1.0"
 
