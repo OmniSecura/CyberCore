@@ -1,37 +1,158 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import JSONResponse
 from fastapi_utils.cbv import cbv
 from sqlalchemy.orm import Session
 
 from ...database.db_connection import get_db
-from ...database.models.Organization import Organization
 from ...security.auth_client import get_current_user
 from ...services.organization_service import OrgService
-from ...schemas.organization import CreateOrganizationRequest
+from ...schemas.organization import (
+    CreateOrganizationRequest,
+    UpdateOrganizationRequest,
+    TransferOwnershipRequest,
+    ReactivateOrganizationRequest,
+    OrganizationResponse,
+)
 
+org_router = APIRouter(prefix="/organizations", tags=["Org"])
 
-org_router = APIRouter(prefix="/organization", tags=["Org"])
 
 def _get_service(db: Session = Depends(get_db)) -> OrgService:
     return OrgService(db)
 
+
 @cbv(org_router)
 class OrganizationRouter:
 
-    @org_router.post("/organization", status_code=status.HTTP_201_CREATED)
+    # ── Create ────────────────────────────────────────────────────────────────
+
+    @org_router.post("/", status_code=status.HTTP_201_CREATED)
     async def create_org(
-            self,
-            data: CreateOrganizationRequest,
-            current_user: dict = Depends(get_current_user),
-            service: OrgService = Depends(_get_service),
+        self,
+        data: CreateOrganizationRequest,
+        current_user: dict = Depends(get_current_user),
+        service: OrgService = Depends(_get_service),
     ):
         try:
-            new_org = service.create_organization(
-                data=data,
-                creator_id=current_user["id"],  # ← ["id"]
-            )
+            service.create_organization(data=data, creator_id=current_user["id"])
             return {"message": "Organization created successfully"}
         except ValueError as e:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
-        except Exception as e:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    # ── List my orgs ──────────────────────────────────────────────────────────
+
+    @org_router.get("/my", status_code=status.HTTP_200_OK)
+    async def get_my_orgs(
+        self,
+        current_user: dict = Depends(get_current_user),
+        service: OrgService = Depends(_get_service),
+    ):
+        orgs = service.list_user_orgs(current_user["id"])
+        return [OrganizationResponse.model_validate(o) for o in orgs]
+
+    # ── Get single org ────────────────────────────────────────────────────────
+
+    @org_router.get("/{slug}", status_code=status.HTTP_200_OK)
+    async def get_org(
+        self,
+        slug: str,
+        current_user: dict = Depends(get_current_user),
+        service: OrgService = Depends(_get_service),
+    ):
+        try:
+            org = service.get_org_for_user(slug=slug, user_id=current_user["id"])
+            return OrganizationResponse.model_validate(org)
+        except LookupError as e:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        except PermissionError as e:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+
+    # ── Update ────────────────────────────────────────────────────────────────
+
+    @org_router.patch("/{slug}", status_code=status.HTTP_200_OK)
+    async def update_org(
+        self,
+        slug: str,
+        data: UpdateOrganizationRequest,
+        current_user: dict = Depends(get_current_user),
+        service: OrgService = Depends(_get_service),
+    ):
+        try:
+            service.update_organization(slug=slug, data=data, actor_id=current_user["id"])
+            return {"message": "Organization updated successfully"}
+        except LookupError as e:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        except PermissionError as e:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+
+    # ── Soft delete ───────────────────────────────────────────────────────────
+
+    @org_router.delete("/{slug}", status_code=status.HTTP_200_OK)
+    async def soft_delete_org(
+        self,
+        slug: str,
+        current_user: dict = Depends(get_current_user),
+        service: OrgService = Depends(_get_service),
+    ):
+        try:
+            service.soft_delete_organization(slug=slug, actor_id=current_user["id"])
+            return {"message": "Organization deleted successfully"}
+        except LookupError as e:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        except PermissionError as e:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+
+    # ── Transfer ownership ────────────────────────────────────────────────────
+
+    @org_router.patch("/{slug}/transfer-ownership", status_code=status.HTTP_200_OK)
+    async def transfer_ownership(
+        self,
+        slug: str,
+        data: TransferOwnershipRequest,
+        current_user: dict = Depends(get_current_user),
+        service: OrgService = Depends(_get_service),
+    ):
+        try:
+            service.transfer_ownership(
+                slug=slug,
+                actor_id=current_user["id"],
+                new_owner_id=data.new_owner_id,
+            )
+            return {"message": "Ownership transferred successfully"}
+        except LookupError as e:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        except PermissionError as e:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+
+    # ── Reactivate ────────────────────────────────────────────────────────────
+    # User must provide a new slug if the original one was taken after deletion.
+    # If new_slug is not provided, we attempt to restore the original slug.
+
+    @org_router.post("/{org_id}/reactivate", status_code=status.HTTP_200_OK)
+    async def reactivate_org(
+        self,
+        org_id: str,
+        data: ReactivateOrganizationRequest,
+        current_user: dict = Depends(get_current_user),
+        service: OrgService = Depends(_get_service),
+    ):
+        try:
+            org = service.reactivate_organization(
+                org_id=org_id,
+                actor_id=current_user["id"],
+                new_slug=data.new_slug,
+            )
+            return {
+                "message": "Organization reactivated successfully",
+                "organization_slug": org.organization_slug,
+            }
+        except LookupError as e:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        except PermissionError as e:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+        except ValueError as e:
+            # Slug conflict — tell the user to pick a different one
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
