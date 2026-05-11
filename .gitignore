@@ -209,3 +209,4 @@ __marimo__/
 .idea
 
 /dashboard/node_modules
+.claude

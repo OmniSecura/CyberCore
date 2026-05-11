@@ -61,49 +61,6 @@ CREATE TABLE user_oauth_providers (
         ON DELETE CASCADE
 );
 
--- organizations: tenants on the platform
--- Each organization has its own plan and isolated data
-CREATE TABLE organizations (
-    id          CHAR(36)        NOT NULL DEFAULT (UUID()),
-    name        VARCHAR(255)    NOT NULL,
-    slug        VARCHAR(100)    NOT NULL,   -- used in URLs, e.g. "acme-corp"
-    plan        VARCHAR(50)     NOT NULL DEFAULT 'free',  -- 'free' | 'pro' | 'enterprise'
-
-    is_active   TINYINT(1)      NOT NULL DEFAULT 1,
-    created_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-
-    PRIMARY KEY (id),
-    UNIQUE KEY uq_organizations_slug (slug)
-);
-
--- organization_members: user <-> org relationship with role
--- A user can belong to multiple organizations with different roles
-CREATE TABLE organization_members (
-    id                  CHAR(36)        NOT NULL DEFAULT (UUID()),
-    organization_id     CHAR(36)        NOT NULL,
-    user_id             CHAR(36)        NOT NULL,
-
-    -- 'owner' | 'admin' | 'member' | 'viewer'
-    role                VARCHAR(50)     NOT NULL DEFAULT 'member',
-
-    invited_by          CHAR(36)        NULL,   -- user_id of the inviter
-    joined_at           DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    PRIMARY KEY (id),
-    -- A user can only appear once per organization
-    UNIQUE KEY uq_members_org_user (organization_id, user_id),
-    CONSTRAINT fk_members_org
-        FOREIGN KEY (organization_id) REFERENCES organizations(id)
-        ON DELETE CASCADE,
-    CONSTRAINT fk_members_user
-        FOREIGN KEY (user_id) REFERENCES users(id)
-        ON DELETE CASCADE,
-    CONSTRAINT fk_members_invited_by
-        FOREIGN KEY (invited_by) REFERENCES users(id)
-        ON DELETE SET NULL
-);
-
 -- user_tokens: short-lived tokens for email flows and invites
 -- Only the hash is stored — plaintext is sent to the user once and discarded
 CREATE TABLE user_tokens (
@@ -153,9 +110,6 @@ CREATE TABLE api_keys (
     UNIQUE KEY uq_api_keys_hash (key_hash),
     CONSTRAINT fk_api_keys_user
         FOREIGN KEY (user_id) REFERENCES users(id)
-        ON DELETE CASCADE,
-    CONSTRAINT fk_api_keys_org
-        FOREIGN KEY (organization_id) REFERENCES organizations(id)
         ON DELETE CASCADE
 );
 
@@ -163,11 +117,9 @@ CREATE TABLE api_keys (
 -- Indexes
 -- ============================================================
 
-CREATE INDEX idx_users_deleted_at           ON users(deleted_at);
-CREATE INDEX idx_oauth_user_id              ON user_oauth_providers(user_id);
-CREATE INDEX idx_members_org_id             ON organization_members(organization_id);
-CREATE INDEX idx_members_user_id            ON organization_members(user_id);
-CREATE INDEX idx_tokens_user_id             ON user_tokens(user_id);
-CREATE INDEX idx_tokens_expires_at          ON user_tokens(expires_at);
-CREATE INDEX idx_api_keys_user_id           ON api_keys(user_id);
-CREATE INDEX idx_api_keys_org_id            ON api_keys(organization_id);
+CREATE INDEX idx_users_deleted_at    ON users(deleted_at);
+CREATE INDEX idx_oauth_user_id       ON user_oauth_providers(user_id);
+CREATE INDEX idx_tokens_user_id      ON user_tokens(user_id);
+CREATE INDEX idx_tokens_expires_at   ON user_tokens(expires_at);
+CREATE INDEX idx_api_keys_user_id    ON api_keys(user_id);
+CREATE INDEX idx_api_keys_org_id     ON api_keys(organization_id);
