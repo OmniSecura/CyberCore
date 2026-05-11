@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}You've been invited to {{ org_name }} — {{ app_name }}{% endblock %}
+{% block content %}
+  <p class="eyebrow">Organization invite</p>
+  <h1>You're invited to join {{ org_name }}</h1>
+  <p><strong>{{ invited_by_name }}</strong> has invited you to join <strong>{{ org_name }}</strong> on {{ app_name }} as a <strong>{{ role }}</strong>.</p>
+  <p>This invitation expires in <strong>48 hours</strong>.</p>
+  <div class="btn-wrap">
+    <a href="{{ invite_url }}" class="btn">Accept invitation</a>
+  </div>
+  <p class="fallback">Button not working? Paste this into your browser:<br><a href="{{ invite_url }}">{{ invite_url }}</a></p>
+  <hr class="divider">
+  <div class="notice">
+    <p>Weren't expecting this? If you don't recognise <strong>{{ invited_by_name }}</strong>, safely ignore this email.</p>
+  </div>
+{% endblock %}
