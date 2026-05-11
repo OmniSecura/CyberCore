@@ -39,6 +39,10 @@ class TransferOwnershipRequest(BaseModel):
     new_owner_id: str
 
 
+class AcceptOwnershipTransferRequest(BaseModel):
+    token: str
+
+
 class ReactivateOrganizationRequest(BaseModel):
     # Optional — if not provided, service attempts to restore original slug.
     # Required if the original slug was taken by another org after deletion.

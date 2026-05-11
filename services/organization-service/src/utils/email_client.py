@@ -69,3 +69,18 @@ class OrgEmailClient:
             invite_url=f"{APP_URL}/invite?token={token}",
         )
         _send(to, subject=f"You've been invited to {org_name} on {MAIL_FROM_NAME}", html=html)
+
+    def send_ownership_transfer(
+        self,
+        to: str,
+        from_owner_name: str,
+        org_name: str,
+        token: str,
+    ) -> None:
+        html = _render(
+            "ownership_transfer.html",
+            from_owner_name=from_owner_name,
+            org_name=org_name,
+            transfer_url=f"{APP_URL}/transfer-ownership/accept?token={token}",
+        )
+        _send(to, subject=f"You've been offered ownership of {org_name} on {MAIL_FROM_NAME}", html=html)

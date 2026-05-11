@@ -6,6 +6,7 @@ from ...database.db_connection import get_db
 from ...security.auth_client import get_current_user
 from ...services.organization_service import OrgService
 from ...schemas.organization import (
+    AcceptOwnershipTransferRequest,
     CreateOrganizationRequest,
     UpdateOrganizationRequest,
     TransferOwnershipRequest,
@@ -104,6 +105,7 @@ class OrganizationRouter:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
 
     # ── Transfer ownership ────────────────────────────────────────────────────
+    # Two-step: owner initiates → email sent → recipient accepts via token.
 
     @org_router.patch("/{slug}/transfer-ownership", status_code=status.HTTP_200_OK)
     async def transfer_ownership(
@@ -114,18 +116,38 @@ class OrganizationRouter:
         service: OrgService = Depends(_get_service),
     ):
         try:
-            service.transfer_ownership(
+            service.initiate_transfer_ownership(
                 slug=slug,
                 actor_id=current_user["id"],
                 new_owner_id=data.new_owner_id,
             )
-            return {"message": "Ownership transferred successfully"}
+            return {"message": "Transfer initiated — the recipient must accept via the email link"}
         except LookupError as e:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
         except PermissionError as e:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+
+    @org_router.post("/transfer-ownership/accept", status_code=status.HTTP_200_OK)
+    async def accept_transfer_ownership(
+        self,
+        data: AcceptOwnershipTransferRequest,
+        current_user: dict = Depends(get_current_user),
+        service: OrgService = Depends(_get_service),
+    ):
+        try:
+            service.accept_ownership_transfer(
+                token=data.token,
+                user_id=current_user["id"],
+            )
+            return {"message": "Ownership accepted successfully"}
+        except LookupError as e:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        except PermissionError as e:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_410_GONE, detail=str(e))
 
     # ── Reactivate ────────────────────────────────────────────────────────────
     # User must provide a new slug if the original one was taken after deletion.

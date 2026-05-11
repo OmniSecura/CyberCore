@@ -89,6 +89,36 @@ CREATE TABLE organization_invites (
         ON DELETE CASCADE
 );
 
+-- ── Pending ownership transfers ───────────────────────────────────────────────
+-- Two-step process: owner initiates, new owner must accept via email link.
+-- Only the SHA-256 hash of the token is stored; plaintext is sent once by email.
+
+CREATE TABLE organization_ownership_transfers (
+    id              CHAR(36)     NOT NULL DEFAULT (UUID()),
+    organization_id CHAR(36)     NOT NULL,
+    from_owner_id   CHAR(36)     NOT NULL,
+    to_owner_id     CHAR(36)     NOT NULL,
+
+    token_hash      VARCHAR(255) NOT NULL,
+    expires_at      DATETIME     NOT NULL,
+    accepted_at     DATETIME     NULL,  -- NULL = pending
+
+    created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_ownership_transfer_token (token_hash),
+
+    CONSTRAINT fk_ownership_transfer_org
+        FOREIGN KEY (organization_id) REFERENCES organization(id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_ownership_transfer_from
+        FOREIGN KEY (from_owner_id) REFERENCES users(id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_ownership_transfer_to
+        FOREIGN KEY (to_owner_id) REFERENCES users(id)
+        ON DELETE CASCADE
+);
+
 -- ── Indexes ───────────────────────────────────────────────────────────────────
 
 CREATE INDEX idx_organization_owner      ON organization(owner_id);
@@ -100,3 +130,6 @@ CREATE INDEX idx_org_users_user_id       ON organization_users(user_id);
 CREATE INDEX idx_org_invites_org_id      ON organization_invites(organization_id);
 CREATE INDEX idx_org_invites_email       ON organization_invites(invited_email);
 CREATE INDEX idx_org_invites_expires_at  ON organization_invites(expires_at);
+
+CREATE INDEX idx_ownership_transfer_org_id ON organization_ownership_transfers(organization_id);
+CREATE INDEX idx_ownership_transfer_to     ON organization_ownership_transfers(to_owner_id);

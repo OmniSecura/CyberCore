@@ -1,12 +1,18 @@
 import hashlib
+import logging
 import secrets
 from datetime import datetime, timezone, timedelta
 
 from sqlalchemy.orm import Session
 
 from ..database.models.Organization import Organization
-from ..schemas.organization import CreateOrganizationRequest, UpdateOrganizationRequest
+from ..database.models.OrganizationOwnershipTransfer import OrganizationOwnershipTransfer
 from ..database.models.OrganizationUsers import OrganizationUser
+from ..database.models.User import User
+from ..schemas.organization import CreateOrganizationRequest, UpdateOrganizationRequest
+from ..utils.email_client import OrgEmailClient
+
+logger = logging.getLogger(__name__)
 
 
 class OrgService:
@@ -82,9 +88,9 @@ class OrgService:
 
         return org
 
-    def transfer_ownership(
+    def initiate_transfer_ownership(
             self, slug: str, actor_id: str, new_owner_id: str
-    ) -> Organization:
+    ) -> None:
         org = self.get_by_slug(slug)
         if not org:
             raise LookupError("Organization not found")
@@ -95,7 +101,6 @@ class OrgService:
         if actor_id == new_owner_id:
             raise ValueError("You are already the owner")
 
-        # New owner must be a member first
         new_owner_member = (
             self.db.query(OrganizationUser)
             .filter(
@@ -107,7 +112,75 @@ class OrgService:
         if not new_owner_member:
             raise ValueError("New owner must be a member of the organization")
 
-        org.owner_id = new_owner_id
+        new_owner = self.db.query(User).filter(User.id == new_owner_id).first()
+        if not new_owner:
+            raise LookupError("New owner user not found")
+
+        # Cancel any existing pending transfer for this org
+        existing = (
+            self.db.query(OrganizationOwnershipTransfer)
+            .filter(
+                OrganizationOwnershipTransfer.organization_id == org.id,
+                OrganizationOwnershipTransfer.accepted_at.is_(None),
+                OrganizationOwnershipTransfer.expires_at > datetime.now(timezone.utc),
+            )
+            .first()
+        )
+        if existing:
+            self.db.delete(existing)
+
+        token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+
+        transfer = OrganizationOwnershipTransfer(
+            organization_id=org.id,
+            from_owner_id=actor_id,
+            to_owner_id=new_owner_id,
+            token_hash=token_hash,
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=48),
+        )
+        self.db.add(transfer)
+        self.db.flush()
+
+        actor = self.db.query(User).filter(User.id == actor_id).first()
+        actor_name = actor.full_name if actor else "Your organization owner"
+
+        try:
+            OrgEmailClient().send_ownership_transfer(
+                to=new_owner.email,
+                from_owner_name=actor_name,
+                org_name=org.organization_name,
+                token=token,
+            )
+        except Exception as exc:
+            logger.warning("Ownership transfer email failed for %s: %s", new_owner.email, exc)
+
+    def accept_ownership_transfer(self, token: str, user_id: str) -> Organization:
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+
+        transfer = (
+            self.db.query(OrganizationOwnershipTransfer)
+            .filter(
+                OrganizationOwnershipTransfer.token_hash == token_hash,
+                OrganizationOwnershipTransfer.accepted_at.is_(None),
+            )
+            .first()
+        )
+        if not transfer:
+            raise LookupError("Invalid or already-used transfer token")
+
+        if transfer.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+            raise ValueError("This transfer request has expired")
+
+        if transfer.to_owner_id != user_id:
+            raise PermissionError("This transfer was not sent to you")
+
+        org = self.get_by_id(transfer.organization_id)
+        if not org:
+            raise LookupError("Organization not found")
+
+        org.owner_id = transfer.to_owner_id
+        transfer.accepted_at = datetime.now(timezone.utc)
         self.db.flush()
         return org
 

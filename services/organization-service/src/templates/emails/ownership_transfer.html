@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Ownership transfer for {{ org_name }} — {{ app_name }}{% endblock %}
+{% block content %}
+  <p class="eyebrow">Ownership transfer</p>
+  <h1>You've been offered ownership of {{ org_name }}</h1>
+  <p><strong>{{ from_owner_name }}</strong> wants to transfer ownership of <strong>{{ org_name }}</strong> to you on {{ app_name }}.</p>
+  <p>As the new owner you will have full control over the organization, including billing, settings, and member management.</p>
+  <p>This offer expires in <strong>48 hours</strong>. If you don't accept, ownership will remain with {{ from_owner_name }}.</p>
+  <div class="btn-wrap">
+    <a href="{{ transfer_url }}" class="btn">Accept ownership</a>
+  </div>
+  <p class="fallback">Button not working? Paste this into your browser:<br><a href="{{ transfer_url }}">{{ transfer_url }}</a></p>
+  <hr class="divider">
+  <div class="notice">
+    <p>Weren't expecting this? If you don't recognise <strong>{{ from_owner_name }}</strong> or don't want to become the owner, safely ignore this email — nothing will change.</p>
+  </div>
+{% endblock %}
