@@ -1,4 +1,10 @@
 const pl = {
+  eyebrow_signin: 'Witaj ponownie',
+  eyebrow_signup: 'Załóż konto',
+  eyebrow_reset:  'Reset hasła',
+  eyebrow_new:    'Nowe hasło',
+  eyebrow_verify: 'Weryfikacja',
+
   login_title: 'Zaloguj się',
   login_sub: 'Witaj z powrotem. Podaj swoje dane aby kontynuować.',
   email_label: 'Adres email', email_ph: 'ty@firma.pl',

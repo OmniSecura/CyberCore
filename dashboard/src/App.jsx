@@ -5,6 +5,7 @@ import { RegisterPage } from './pages/RegisterPage'
 import { VerifyEmailPage } from './pages/VerifyEmailPage'
 import { ResetRequestPage } from './pages/ResetRequestPage'
 import { ResetConfirmPage } from './pages/ResetConfirmPage'
+import { DashboardPage } from './pages/DashboardPage'
 import { useLang } from './hooks/useLang'
 
 function getInitialView() {
@@ -22,6 +23,8 @@ export function App() {
   const [view, setView] = useState(initialView)
 
   function navigate(v) { setView(v) }
+
+  if (view === 'dashboard') return <DashboardPage />
 
   const sharedProps = { t, tf, lang, navigate }
 

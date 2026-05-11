@@ -4,10 +4,10 @@ const CHECK = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeW
 
 export function SuccessCard({ title, sub, btnLabel, onBtn }) {
   return (
-    <div className="card" style={{ textAlign: 'center' }}>
+    <div className="auth-card text-center">
       <div className="success-check">{CHECK}</div>
-      <div className="card-title">{title}</div>
-      <div className="card-sub" style={{ marginBottom: 28 }} dangerouslySetInnerHTML={{ __html: sub }} />
+      <h1 style={{ marginBottom: 8 }}>{title}</h1>
+      <div className="sub" style={{ marginBottom: 28 }} dangerouslySetInnerHTML={{ __html: sub }} />
       <Button onClick={onBtn}>{btnLabel}</Button>
     </div>
   )

@@ -1,4 +1,10 @@
 const en = {
+  eyebrow_signin: 'Welcome back',
+  eyebrow_signup: 'Create account',
+  eyebrow_reset:  'Reset password',
+  eyebrow_new:    'New password',
+  eyebrow_verify: 'Verify email',
+
   login_title: 'Sign in',
   login_sub: 'Welcome back. Enter your credentials to continue.',
   email_label: 'Email address', email_ph: 'you@company.com',
