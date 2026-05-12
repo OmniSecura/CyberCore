@@ -83,6 +83,23 @@ const IconCode = () => (
     <path d="M5 4L1 8l4 4M11 4l4 4-4 4M9.5 2.5l-3 11"/>
   </svg>
 )
+const IconGit = () => (
+  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="5" cy="4" r="1.5"/><circle cx="11" cy="12" r="1.5"/><circle cx="11" cy="4" r="1.5"/>
+    <path d="M5 5.5v5a1.5 1.5 0 0 0 1.5 1.5H9.5"/>
+  </svg>
+)
+const IconZip = () => (
+  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 2h7l3 3v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/>
+    <path d="M10 2v3h3M7 6v1M7 9v1M7 12v1M8 7h1v1H8zM8 10h1v1H8z"/>
+  </svg>
+)
+const IconWarn = () => (
+  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M8 1.5l7 12H1z"/><path d="M8 6.5v3M8 12v.5"/>
+  </svg>
+)
 
 // ─── Status badge ─────────────────────────────────────────────────────────────
 
@@ -113,17 +130,34 @@ function SevBadge({ severity }) {
 
 // ─── Create scan modal ────────────────────────────────────────────────────────
 
-function CreateScanModal({ slug, onCreated, onClose }) {
+const FREE_SCAN_LIMIT = 3
+
+function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
+  const [mode, setMode]       = useState('git')   // 'git' | 'zip'
   const [name, setName]       = useState('')
   const [url, setUrl]         = useState('')
+  const [file, setFile]       = useState(null)
   const [loading, setLoading] = useState(false)
   const [err, setErr]         = useState(null)
+  const fileRef               = useRef(null)
+
+  const isFree       = plan === 'free'
+  const limitReached = isFree && activeCount >= FREE_SCAN_LIMIT
+
+  const canSubmit = !loading && !limitReached && name.trim() &&
+    (mode === 'git' ? url.trim() : !!file)
 
   async function submit(e) {
     e.preventDefault()
+    if (!canSubmit) return
     setLoading(true); setErr(null)
     try {
-      const job = await scanApi.submitGit(slug, { name: name.trim(), target_url: url.trim() })
+      let job
+      if (mode === 'git') {
+        job = await scanApi.submitGit(slug, { name: name.trim(), target_url: url.trim() })
+      } else {
+        job = await scanApi.submitUpload(slug, name.trim(), file)
+      }
       onCreated(job)
     } catch (ex) {
       setErr(ex?.data?.detail || 'Failed to submit scan.')
@@ -131,19 +165,71 @@ function CreateScanModal({ slug, onCreated, onClose }) {
     }
   }
 
+  function handleFile(e) {
+    const f = e.target.files?.[0]
+    if (!f) return
+    if (!f.name.toLowerCase().endsWith('.zip')) {
+      setErr('Only .zip files are accepted.')
+      e.target.value = ''
+      return
+    }
+    setErr(null)
+    setFile(f)
+  }
+
   return (
     <div className="cc-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="cc-modal">
+      <div className="cc-modal sc-modal">
+        {/* Header */}
         <div className="cc-modal-head">
           <div>
             <div className="cc-modal-title">New SAST Scan</div>
-            <div className="cc-modal-sub">Scan a Git repository for security vulnerabilities</div>
+            <div className="cc-modal-sub">Detect security vulnerabilities in your code</div>
           </div>
-          <button className="cc-modal-x" onClick={onClose}><IconX /></button>
+          <button className="cc-modal-x" onClick={onClose} type="button"><IconX /></button>
         </div>
+
         <form onSubmit={submit}>
           <div className="cc-modal-body">
+            {/* Free plan limit warning */}
+            {limitReached && (
+              <div className="cc-alert sc-alert--warn">
+                <IconWarn />
+                <span>
+                  Free plan limit reached — you can have at most {FREE_SCAN_LIMIT} active scans at once.
+                  Wait for a running scan to finish or cancel one.
+                </span>
+              </div>
+            )}
+
+            {isFree && !limitReached && (
+              <div className="sc-plan-note">
+                <IconWarn />
+                Free plan: {FREE_SCAN_LIMIT - activeCount} of {FREE_SCAN_LIMIT} concurrent scan slot{FREE_SCAN_LIMIT - activeCount !== 1 ? 's' : ''} available
+              </div>
+            )}
+
             {err && <div className="cc-alert cc-alert--err"><IconErr />{err}</div>}
+
+            {/* Source type tabs */}
+            <div className="sc-mode-tabs">
+              <button
+                type="button"
+                className={`sc-mode-tab${mode === 'git' ? ' sc-mode-tab--on' : ''}`}
+                onClick={() => { setMode('git'); setErr(null) }}
+              >
+                <IconGit /> Git URL
+              </button>
+              <button
+                type="button"
+                className={`sc-mode-tab${mode === 'zip' ? ' sc-mode-tab--on' : ''}`}
+                onClick={() => { setMode('zip'); setErr(null) }}
+              >
+                <IconZip /> ZIP Archive
+              </button>
+            </div>
+
+            {/* Scan name */}
             <div className="cc-mfield">
               <label>Scan name</label>
               <input
@@ -152,28 +238,80 @@ function CreateScanModal({ slug, onCreated, onClose }) {
                 placeholder="e.g. Main branch — sprint 42"
                 required
                 autoFocus
+                disabled={limitReached}
               />
             </div>
-            <div className="cc-mfield">
-              <label>Git repository URL</label>
-              <input
-                value={url}
-                onChange={e => setUrl(e.target.value)}
-                placeholder="https://github.com/org/repo"
-                required
-              />
-            </div>
+
+            {/* Git URL mode */}
+            {mode === 'git' && (
+              <div className="cc-mfield">
+                <label>Repository URL</label>
+                <input
+                  value={url}
+                  onChange={e => setUrl(e.target.value)}
+                  placeholder="https://github.com/org/repo"
+                  required
+                  disabled={limitReached}
+                />
+              </div>
+            )}
+
+            {/* ZIP mode */}
+            {mode === 'zip' && (
+              <div className="cc-mfield">
+                <label>ZIP archive</label>
+                <div
+                  className={`sc-dropzone${file ? ' sc-dropzone--has-file' : ''}`}
+                  onClick={() => !limitReached && fileRef.current?.click()}
+                  onDragOver={e => e.preventDefault()}
+                  onDrop={e => {
+                    e.preventDefault()
+                    const f = e.dataTransfer.files?.[0]
+                    if (f) {
+                      if (!f.name.toLowerCase().endsWith('.zip')) {
+                        setErr('Only .zip files are accepted.')
+                      } else {
+                        setErr(null); setFile(f)
+                      }
+                    }
+                  }}
+                >
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept=".zip"
+                    style={{ display: 'none' }}
+                    onChange={handleFile}
+                  />
+                  {file ? (
+                    <>
+                      <IconZip />
+                      <div className="sc-dropzone-name">{file.name}</div>
+                      <div className="sc-dropzone-size">{(file.size / 1024 / 1024).toFixed(1)} MB</div>
+                      <button
+                        type="button"
+                        className="sc-dropzone-clear"
+                        onClick={e => { e.stopPropagation(); setFile(null); fileRef.current.value = '' }}
+                      ><IconX /></button>
+                    </>
+                  ) : (
+                    <>
+                      <IconZip />
+                      <div className="sc-dropzone-label">Drop a .zip file here or click to browse</div>
+                      <div className="sc-dropzone-hint">Source code archive (.zip only)</div>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
+
           <div className="cc-modal-foot">
             <button type="button" className="cc-btn cc-btn-md cc-btn-ghost" onClick={onClose} disabled={loading}>
               Cancel
             </button>
-            <button
-              type="submit"
-              className="cc-btn cc-btn-md cc-btn-primary"
-              disabled={loading || !name.trim() || !url.trim()}
-            >
-              {loading ? <><span className="cc-spin" />Starting…</> : <><IconScan />Start scan</>}
+            <button type="submit" className="cc-btn cc-btn-md cc-btn-primary" disabled={!canSubmit}>
+              {loading ? <><span className="cc-spin" />Starting…</> : 'Start scan'}
             </button>
           </div>
         </form>
@@ -187,9 +325,10 @@ function CreateScanModal({ slug, onCreated, onClose }) {
 const PAGE_SIZE = 20
 const STATUS_FILTERS = ['queued', 'running', 'completed', 'failed', 'cancelled']
 
-function ScanList({ slug, has, onSelect }) {
+function ScanList({ slug, plan, has, onSelect }) {
   const [scans, setScans]           = useState([])
   const [total, setTotal]           = useState(0)
+  const [activeCount, setActiveCount] = useState(0)
   const [loading, setLoading]       = useState(true)
   const [err, setErr]               = useState(null)
   const [page, setPage]             = useState(1)
@@ -198,9 +337,18 @@ function ScanList({ slug, has, onSelect }) {
 
   const load = useCallback(() => {
     setLoading(true)
-    scanApi
-      .list(slug, { offset: (page - 1) * PAGE_SIZE, limit: PAGE_SIZE, status: statusFilter })
-      .then(data => { setScans(data.items); setTotal(data.total); setLoading(false) })
+    Promise.all([
+      scanApi.list(slug, { offset: (page - 1) * PAGE_SIZE, limit: PAGE_SIZE, status: statusFilter }),
+      // Always fetch active count separately (independent of page/filter)
+      scanApi.list(slug, { offset: 0, limit: 1, status: 'queued' }),
+      scanApi.list(slug, { offset: 0, limit: 1, status: 'running' }),
+    ])
+      .then(([main, q, r]) => {
+        setScans(main.items)
+        setTotal(main.total)
+        setActiveCount(q.total + r.total)
+        setLoading(false)
+      })
       .catch(ex => { setErr(ex?.data?.detail || 'Failed to load scans.'); setLoading(false) })
   }, [slug, page, statusFilter])
 
@@ -337,6 +485,8 @@ function ScanList({ slug, has, onSelect }) {
       {showCreate && (
         <CreateScanModal
           slug={slug}
+          plan={plan}
+          activeCount={activeCount}
           onClose={() => setShowCreate(false)}
           onCreated={job => { setShowCreate(false); onSelect(job.id) }}
         />
@@ -773,7 +923,7 @@ function ScanDetail({ slug, jobId, has, onBack }) {
           )}
           {!isActive && has('scans.manage') && (
             <button className="cc-btn cc-btn-md cc-btn-danger" onClick={() => setConfirmDel(true)} disabled={deleting}>
-              <IconTrash /> Delete
+              Delete
             </button>
           )}
         </div>
@@ -819,7 +969,7 @@ function ScanDetail({ slug, jobId, has, onBack }) {
               <button className="cc-btn cc-btn-md cc-btn-danger" onClick={doDelete} disabled={deleting}>
                 {deleting
                   ? <span className="cc-spin" style={{ borderColor: 'rgba(197,48,48,.25)', borderTopColor: '#C53030' }} />
-                  : <IconTrash />
+                  : null
                 }
                 Delete
               </button>
@@ -850,6 +1000,7 @@ export function ScansTab({ org, has }) {
   return (
     <ScanList
       slug={org.organization_slug}
+      plan={org.plan || 'free'}
       has={has}
       onSelect={setSelectedId}
     />
