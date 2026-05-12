@@ -32,7 +32,7 @@ CREATE TABLE scan_findings (
     code_snippet    TEXT            NULL,
 
     -- Taxonomy
-    cwe             VARCHAR(64)     NULL,   -- e.g. 'CWE-89'
+    cwe             VARCHAR(256)    NULL,   -- e.g. 'CWE-79: ...' (semgrep returns full description)
     owasp           VARCHAR(64)     NULL,   -- e.g. 'A03:2021'
 
     -- SHA-256(rule_id:file_path:line_start:message), first 64 hex chars

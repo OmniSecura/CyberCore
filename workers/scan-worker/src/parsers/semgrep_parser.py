@@ -21,14 +21,14 @@ def _extract_cwe(metadata: dict) -> str | None:
     cwe = metadata.get("cwe") or metadata.get("CWE")
     if isinstance(cwe, list):
         cwe = cwe[0] if cwe else None
-    return str(cwe) if cwe else None
+    return str(cwe)[:256] if cwe else None
 
 
 def _extract_owasp(metadata: dict) -> str | None:
     owasp = metadata.get("owasp") or metadata.get("OWASP")
     if isinstance(owasp, list):
         owasp = owasp[0] if owasp else None
-    return str(owasp) if owasp else None
+    return str(owasp)[:64] if owasp else None
 
 
 def parse(report: dict, source_dir: Path) -> list[dict[str, Any]]:
@@ -53,7 +53,10 @@ def parse(report: dict, source_dir: Path) -> list[dict[str, Any]]:
         end = item.get("end", {})
         snippet = extra.get("lines", "").strip() or None
         message = extra.get("message", "").strip()
-        title = metadata.get("shortlink") or rule_id.split(".")[-1].replace("-", " ").replace("_", " ").title()
+        title = (
+            metadata.get("name")
+            or rule_id.split(".")[-1].replace("-", " ").replace("_", " ").title()
+        )
 
         fingerprint = hashlib.sha256(
             f"{rule_id}:{file_path}:{start.get('line', 0)}:{message}".encode()

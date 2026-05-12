@@ -29,7 +29,7 @@ class ScanFinding(TimestampMixin, Base):
     line_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
     code_snippet: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    cwe: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    cwe: Mapped[str | None] = mapped_column(String(256), nullable=True)
     owasp: Mapped[str | None] = mapped_column(String(64), nullable=True)
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
 

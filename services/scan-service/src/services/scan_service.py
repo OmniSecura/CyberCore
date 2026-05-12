@@ -14,7 +14,8 @@ from ..schemas.scan import SubmitGitScanRequest
 
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
-SCAN_UPLOAD_DIR = os.getenv("SCAN_UPLOAD_DIR", "/tmp/cybercore/uploads")
+_DEFAULT_TMP = "C:/tmp/cybercore" if os.name == "nt" else "/tmp/cybercore"
+SCAN_UPLOAD_DIR = os.getenv("SCAN_UPLOAD_DIR", f"{_DEFAULT_TMP}/uploads")
 
 _celery = Celery(broker=CELERY_BROKER_URL, backend=CELERY_RESULT_BACKEND)
 
@@ -42,7 +43,8 @@ class ScanService:
             target_url=body.target_url,
         )
         self.db.add(job)
-        self.db.flush()
+        self.db.commit()
+        self.db.refresh(job)
 
         task = _celery.send_task(
             "scan_worker.tasks.sast.run_sast_scan",
@@ -80,7 +82,8 @@ class ScanService:
             target_path=dest,
         )
         self.db.add(job)
-        self.db.flush()
+        self.db.commit()
+        self.db.refresh(job)
 
         task = _celery.send_task(
             "scan_worker.tasks.sast.run_sast_scan",
