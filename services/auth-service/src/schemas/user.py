@@ -38,3 +38,17 @@ class UserResponse(BaseModel):
     created_at:     datetime
 
     model_config = {"from_attributes": True}
+
+
+class UserLookupRequest(BaseModel):
+    """Resolve a batch of user IDs to public profile info."""
+    ids: list[str]
+
+
+class PublicUser(BaseModel):
+    """Minimal user info safe to expose to other authenticated members."""
+    id:        str
+    email:     str
+    full_name: str
+
+    model_config = {"from_attributes": True}

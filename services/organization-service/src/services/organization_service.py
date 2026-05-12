@@ -3,6 +3,7 @@ import logging
 import secrets
 from datetime import datetime, timezone, timedelta
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..database.models.Organization import Organization
@@ -22,22 +23,19 @@ class OrgService:
     # ── Queries ───────────────────────────────────────────────────────────────
 
     def get_by_slug(self, slug: str) -> Organization | None:
+        # NOTE: returns inactive (soft-deleted) orgs too. deleted_at is a retention
+        # marker for cleanup jobs, not a hide flag. Callers gate on is_active when
+        # needed.
         return (
             self.db.query(Organization)
-            .filter(
-                Organization.organization_slug == slug,
-                Organization.deleted_at.is_(None),
-            )
+            .filter(Organization.organization_slug == slug)
             .first()
         )
 
     def get_by_id(self, org_id: str) -> Organization | None:
         return (
             self.db.query(Organization)
-            .filter(
-                Organization.id == org_id,
-                Organization.deleted_at.is_(None),
-            )
+            .filter(Organization.id == org_id)
             .first()
         )
 
@@ -53,9 +51,8 @@ class OrgService:
 
     def list_user_orgs(self, user_id: str) -> list[type[Organization]]:
         member_org_ids = (
-            self.db.query(OrganizationUser.organization_id)
-            .filter(OrganizationUser.user_id == user_id)
-            .subquery()
+            select(OrganizationUser.organization_id)
+            .where(OrganizationUser.user_id == user_id)
         )
         return (
             self.db.query(Organization)
@@ -67,6 +64,69 @@ class OrgService:
             )
             .all()
         )
+
+    def list_user_orgs_paginated(
+        self, user_id: str, page: int = 1, page_size: int = 20
+    ) -> tuple[list[tuple[Organization, str]], int]:
+        """Returns ([(org, role)], total) — role is the actor's role on each org."""
+        page = max(1, page)
+        page_size = max(1, min(100, page_size))
+
+        member_org_ids = (
+            select(OrganizationUser.organization_id)
+            .where(OrganizationUser.user_id == user_id)
+        )
+
+        base = (
+            self.db.query(Organization)
+            .filter(
+                (Organization.owner_id == user_id) |
+                (Organization.id.in_(member_org_ids))
+            )
+            .order_by(Organization.is_active.desc(), Organization.id)
+        )
+
+        total = base.count()
+        orgs = base.offset((page - 1) * page_size).limit(page_size).all()
+
+        member_roles = {
+            ou.organization_id: ou.role
+            for ou in self.db.query(OrganizationUser)
+                              .filter(OrganizationUser.user_id == user_id)
+                              .all()
+        }
+
+        result: list[tuple[Organization, str]] = []
+        for org in orgs:
+            if org.owner_id == user_id:
+                role = "owner"
+            else:
+                role = member_roles.get(org.id, "viewer")
+            result.append((org, role))
+
+        return result, total
+
+    def get_user_role(self, org: Organization, user_id: str) -> str:
+        if org.owner_id == user_id:
+            return "owner"
+        member = (
+            self.db.query(OrganizationUser)
+            .filter(
+                OrganizationUser.organization_id == org.id,
+                OrganizationUser.user_id == user_id,
+            )
+            .first()
+        )
+        return member.role if member else "viewer"
+
+    def count_org_members(self, org_id: str) -> int:
+        """Member count = OrganizationUser rows + 1 (for the owner)."""
+        members = (
+            self.db.query(OrganizationUser)
+            .filter(OrganizationUser.organization_id == org_id)
+            .count()
+        )
+        return members + 1
 
     def get_org_for_user(self, slug: str, user_id: str) -> Organization:
         org = self.get_by_slug(slug)
@@ -179,6 +239,32 @@ class OrgService:
         if not org:
             raise LookupError("Organization not found")
 
+        prev_owner_id = org.owner_id
+
+        # The new owner was a member — drop the membership row (they become owner now).
+        self.db.query(OrganizationUser).filter(
+            OrganizationUser.organization_id == org.id,
+            OrganizationUser.user_id == transfer.to_owner_id,
+        ).delete(synchronize_session=False)
+
+        # The previous owner needs an explicit row now (was implicit before).
+        # Give them admin so they don't lose access on the spot.
+        already = (
+            self.db.query(OrganizationUser)
+            .filter(
+                OrganizationUser.organization_id == org.id,
+                OrganizationUser.user_id == prev_owner_id,
+            )
+            .first()
+        )
+        if not already:
+            self.db.add(OrganizationUser(
+                organization_id=org.id,
+                user_id=prev_owner_id,
+                role="admin",
+                invited_by=transfer.to_owner_id,
+            ))
+
         org.owner_id = transfer.to_owner_id
         transfer.accepted_at = datetime.now(timezone.utc)
         self.db.flush()
@@ -186,39 +272,28 @@ class OrgService:
 
     def reactivate_organization(
             self, org_id: str, actor_id: str, new_slug: str | None = None
-    ) -> type[Organization]:
-        org = (
-            self.db.query(Organization)
-            .filter(Organization.id == org_id)
-            .first()
-        )
+    ) -> Organization:
+        org = self.get_by_id(org_id)
         if not org:
             raise LookupError("Organization not found")
 
         if org.owner_id != actor_id:
             raise PermissionError("Only the owner can reactivate the organization")
 
-        # Resolve which slug to use after reactivation
-        if new_slug:
-            # User explicitly provided a new slug — check availability
-            if self.get_by_slug(new_slug):
+        if org.is_active:
+            raise ValueError("Organization is already active")
+
+        # Optional rename on reactivation — uniqueness is checked against other orgs.
+        if new_slug and new_slug != org.organization_slug:
+            existing = self.get_by_slug(new_slug)
+            if existing and existing.id != org.id:
                 raise ValueError(
                     f"Slug '{new_slug}' is already taken — please choose a different one"
                 )
-            restored_slug = new_slug
-        else:
-            # Attempt to restore original slug by stripping the _deleted_ suffix
-            original_slug = org.organization_slug.split("_deleted_")[0]
-            if self.get_by_slug(original_slug):
-                raise ValueError(
-                    f"Original slug '{original_slug}' is already taken. "
-                    f"Please provide a new slug via the 'new_slug' field."
-                )
-            restored_slug = original_slug
+            org.organization_slug = new_slug
 
-        org.organization_slug = restored_slug
-        org.deleted_at = None
         org.is_active = True
+        org.deleted_at = None
         self.db.flush()
         return org
 
@@ -262,6 +337,12 @@ class OrgService:
         return org
 
     def soft_delete_organization(self, slug: str, actor_id: str) -> None:
+        """
+        Soft-delete the organization. The row stays in the database with
+        is_active=False and deleted_at=now() — visible to the owner as 'Inactive'
+        and reactivatable. A scheduled cleanup job is expected to hard-delete
+        rows whose deleted_at is older than the retention window.
+        """
         org = self.get_by_slug(slug)
         if not org:
             raise LookupError(f"Organization '{slug}' not found")
@@ -269,7 +350,6 @@ class OrgService:
         if org.owner_id != actor_id:
             raise PermissionError("Only the owner can delete the organization")
 
-        org.organization_slug = f"{org.organization_slug}_deleted_{org.id[:8]}"
-        org.deleted_at = datetime.now(timezone.utc)
         org.is_active = False
+        org.deleted_at = datetime.now(timezone.utc)
         self.db.flush()

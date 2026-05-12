@@ -4,12 +4,12 @@ export function Input({ id, label, error, children, ...inputProps }) {
   return (
     <div className="field">
       {label && <label htmlFor={id}>{label}</label>}
-      <div className="input-wrap">
-        <input id={id} className={error ? 'error' : ''} {...inputProps} />
+      <div className="field-wrap">
+        <input id={id} className={error ? 'has-error' : ''} {...inputProps} />
         {children}
       </div>
       {error && (
-        <div className="field-error">
+        <div className="field-err">
           {ERR_ICON}
           <span>{error}</span>
         </div>

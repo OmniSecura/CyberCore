@@ -124,7 +124,7 @@ class InviteService:
         self.db.delete(invite)
         self.db.flush()
 
-    def accept_invite(self, token: str, user_id: str, user_email: str) -> OrganizationInvite:
+    def accept_invite(self, token: str, user_id: str, user_email: str) -> tuple[OrganizationInvite, Organization]:
         token_hash = hashlib.sha256(token.encode()).hexdigest()
 
         invite = (
@@ -143,6 +143,14 @@ class InviteService:
 
         if invite.invited_email != user_email.lower():
             raise PermissionError("This invite was sent to a different email address")
+
+        org = (
+            self.db.query(Organization)
+            .filter(Organization.id == invite.organization_id)
+            .first()
+        )
+        if not org:
+            raise LookupError("The organization no longer exists")
 
         already = (
             self.db.query(OrganizationUser)
@@ -164,4 +172,4 @@ class InviteService:
         self.db.add(membership)
         invite.used_at = datetime.now(timezone.utc)
         self.db.flush()
-        return invite
+        return invite, org

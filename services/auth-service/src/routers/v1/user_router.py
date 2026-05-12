@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from ...database.db_connection import get_db
 from ...database.models.User import User
-from ...schemas.user import CreateUser, LoginRequest, UserResponse
+from ...schemas.user import CreateUser, LoginRequest, PublicUser, UserLookupRequest, UserResponse
 from ...schemas.email import DeleteAccountRequest
 from ...security.JWT import (
     blacklist_from_request_cookies,
@@ -148,6 +148,32 @@ class AuthRouter:
     def get_me(self, current_user: User = Depends(get_current_user)):
         """Return the current user's profile (safe fields only)."""
         return current_user
+
+    # ── Bulk lookup ───────────────────────────────────────────────────────────
+
+    @auth_router.post("/lookup", status_code=status.HTTP_200_OK, response_model=list[PublicUser])
+    def lookup_users(
+        self,
+        body: UserLookupRequest,
+        db: Session = Depends(get_db),
+        _current: User = Depends(get_current_user),
+    ):
+        """
+        Resolve a batch of user IDs into public profile info (id, email, full_name).
+        Requires an authenticated session — used by other services / the UI to
+        render member rows with real names instead of UUIDs.
+        Unknown / soft-deleted IDs are silently skipped.
+        """
+        if not body.ids:
+            return []
+        # Cap input to keep this cheap.
+        ids = list({str(i) for i in body.ids})[:200]
+        users = (
+            db.query(User)
+            .filter(User.id.in_(ids), User.deleted_at.is_(None))
+            .all()
+        )
+        return users
 
     # ── Resend verification ───────────────────────────────────────────────────
 

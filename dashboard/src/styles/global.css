@@ -1,23 +1,103 @@
-/* ── Reset ─────────────────────────────────────────────────────────────────── */
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { height: 100%; font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--navy); }
-#root { height: 100%; }
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
-/* ── Design tokens ─────────────────────────────────────────────────────────── */
+/* ── Reset ───────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; -webkit-font-smoothing: antialiased; }
+#root { min-height: 100%; }
+
+/* ── Brand: cyan ─────────────────────────────────────────────────────────── */
 :root {
   --cyan:        #00C2CB;
   --cyan-dark:   #009EA6;
+  --cyan-darker: #007780;
   --cyan-light:  #E0FAFA;
+  --cyan-50:     #F2FCFC;
+
+  /* ── Brand: blue (accent) ─────────────────────────────────────────────── */
   --blue:        #1A6EF5;
+  --blue-dark:   #1457C8;
+  --blue-light:  #E8F0FE;
+
+  /* ── Surface: navy / ink ──────────────────────────────────────────────── */
   --navy:        #0A1628;
+  --navy-2:      #122039;
+  --navy-3:      #1B2C4A;
+
+  /* ── Surface: neutrals (light theme) ─────────────────────────────────── */
+  --white:       #FFFFFF;
+  --bg:          #F4F8FC;
+  --bg-2:        #ECF2F8;
+  --border:      #D6E4F0;
+  --border-soft: #E6EEF6;
   --slate:       #4A6080;
   --muted:       #8899AA;
-  --border:      #D6E4F0;
-  --bg:          #F4F8FC;
-  --white:       #FFFFFF;
+
+  /* ── Semantic ─────────────────────────────────────────────────────────── */
   --red:         #E53E3E;
   --red-light:   #FFF5F5;
+  --red-dark:    #C53030;
+  --amber:       #DD6B20;
+  --amber-light: #FFFAF0;
   --green:       #38A169;
   --green-light: #F0FFF4;
+  --green-dark:  #276749;
+
+  /* ── Severity scale ───────────────────────────────────────────────────── */
+  --sev-critical: #B83249;
+  --sev-high:     #E53E3E;
+  --sev-medium:   #DD6B20;
+  --sev-low:      #D69E2E;
+  --sev-info:     #1A6EF5;
+
+  /* ── Foreground aliases ───────────────────────────────────────────────── */
+  --fg-1: var(--navy);
+  --fg-2: var(--slate);
+  --fg-3: var(--muted);
+  --fg-on-dark: #FFFFFF;
+  --fg-on-dark-2: rgba(255,255,255,.65);
+  --fg-on-dark-3: rgba(255,255,255,.45);
+
+  /* ── Type ─────────────────────────────────────────────────────────────── */
+  --font-display: 'Syne', ui-sans-serif, system-ui, sans-serif;
+  --font-body:    'DM Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-mono:    'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+
+  --t-display:      700 40px/1.1   var(--font-display);
+  --t-h1:           700 32px/1.15  var(--font-display);
+  --t-h2:           700 24px/1.25  var(--font-display);
+  --t-h3:           600 18px/1.35  var(--font-display);
+  --t-eyebrow:      600 11px/1.2   var(--font-body);
+  --t-body:         400 14.5px/1.55 var(--font-body);
+  --t-body-strong:  500 14.5px/1.55 var(--font-body);
+  --t-small:        400 13px/1.5   var(--font-body);
+  --t-micro:        500 11.5px/1.3 var(--font-body);
+  --t-code:         500 13px/1.5   var(--font-mono);
+
+  /* ── Spacing ──────────────────────────────────────────────────────────── */
+  --s-1:  4px;  --s-2:  8px;  --s-3: 12px;  --s-4: 16px;  --s-5: 20px;
+  --s-6: 24px;  --s-7: 32px;  --s-8: 40px;  --s-9: 56px;  --s-10: 72px;
+
+  /* ── Radii ────────────────────────────────────────────────────────────── */
+  --r-1: 6px; --r-2: 10px; --r-3: 14px; --r-4: 20px; --r-full: 999px;
+
+  /* ── Elevation ────────────────────────────────────────────────────────── */
+  --shadow-sm:   0 1px 2px rgba(10,22,40,.06), 0 1px 1px rgba(10,22,40,.04);
+  --shadow-md:   0 4px 14px rgba(10,22,40,.08);
   --shadow-lg:   0 12px 40px rgba(10,22,40,.13);
+  --shadow-glow: 0 4px 14px rgba(0,194,203,.35);
+  --ring-cyan:   0 0 0 3px rgba(0,194,203,.18);
+  --ring-red:    0 0 0 3px rgba(229,62,62,.12);
+
+  /* ── Motion ───────────────────────────────────────────────────────────── */
+  --ease-out:    cubic-bezier(.22, 1, .36, 1);
+  --ease-in-out: cubic-bezier(.65, 0, .35, 1);
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 400ms;
+}
+
+html, body {
+  font-family: var(--font-body);
+  color: var(--fg-1);
+  background: var(--bg);
 }

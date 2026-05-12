@@ -167,12 +167,17 @@ class InviteRouter:
         service: InviteService = Depends(_invite_svc),
     ):
         try:
-            service.accept_invite(
+            invite, org = service.accept_invite(
                 token=data.token,
                 user_id=current_user["id"],
                 user_email=current_user["email"],
             )
-            return {"message": "Successfully joined the organization"}
+            return {
+                "message": "Successfully joined the organization",
+                "organization_slug": org.organization_slug,
+                "organization_name": org.organization_name,
+                "role": invite.role,
+            }
         except LookupError as e:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
         except PermissionError as e:

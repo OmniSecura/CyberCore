@@ -27,13 +27,26 @@ class UpdateOrganizationRequest(BaseModel):
     organization_description: Optional[str] = None
 
 class OrganizationResponse(BaseModel):
+    id: str
+    owner_id: str
     organization_name: str
     organization_slug: str
     organization_description: Optional[str]
     plan: str
+    is_active: bool
+    role: Optional[str] = None      # 'owner' | 'admin' | 'member' | 'viewer'
+    member_count: Optional[int] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class PaginatedOrganizationsResponse(BaseModel):
+    items: list[OrganizationResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
 
 class TransferOwnershipRequest(BaseModel):
     new_owner_id: str
@@ -51,6 +64,8 @@ class ReactivateOrganizationRequest(BaseModel):
     @field_validator("new_slug")
     @classmethod
     def validate_slug(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
         v = v.strip().lower()
         if not _SLUG_RE.match(v):
             raise ValueError(

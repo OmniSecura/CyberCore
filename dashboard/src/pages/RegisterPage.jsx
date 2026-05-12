@@ -6,8 +6,6 @@ import { Alert } from '../components/ui/Alert'
 import { SuccessCard } from '../components/ui/SuccessCard'
 import { useApi } from '../hooks/useApi'
 
-const USER_ICON = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>
-
 export function RegisterPage({ t, tf, lang, navigate }) {
   const [name, setName]     = useState('')
   const [email, setEmail]   = useState('')
@@ -57,10 +55,12 @@ export function RegisterPage({ t, tf, lang, navigate }) {
   }
 
   return (
-    <div className="card">
-      <div className="card-icon">{USER_ICON}</div>
-      <div className="card-title">{t('reg_title')}</div>
-      <div className="card-sub">{t('reg_sub')}</div>
+    <div className="auth-card">
+      <div className="head">
+        <div className="eyebrow">{t('eyebrow_signup')}</div>
+        <h1>{t('reg_title')}</h1>
+        <div className="sub">{t('reg_sub')}</div>
+      </div>
 
       {global && <Alert type={global.type}>{global.msg}</Alert>}
 
@@ -69,11 +69,13 @@ export function RegisterPage({ t, tf, lang, navigate }) {
           id="full_name" label={t('name_label')} type="text"
           placeholder={t('name_ph')} value={name}
           onChange={e => setName(e.target.value)} error={errors.name}
+          autoComplete="name"
         />
         <Input
           id="email" label={t('email_label')} type="email"
           placeholder={t('email_ph')} value={email}
           onChange={e => setEmail(e.target.value)} error={errors.email}
+          autoComplete="email"
         />
         <PasswordInput
           id="password" label={t('pw_label')} lang={lang}
@@ -89,7 +91,7 @@ export function RegisterPage({ t, tf, lang, navigate }) {
 
         <Button type="submit" loading={loading}>{t('reg_btn')}</Button>
 
-        <div className="text-center small">
+        <div className="text-center small" style={{ marginTop: 6 }}>
           {t('have_account')}{' '}
           <button type="button" className="link" onClick={() => navigate('login')}>
             {t('sign_in')}
