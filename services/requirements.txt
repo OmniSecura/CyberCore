@@ -10,3 +10,4 @@ typing_inspect
 pymysql
 argon2-cffi
 httpx
+celery

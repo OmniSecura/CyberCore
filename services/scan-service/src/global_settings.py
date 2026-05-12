@@ -1,9 +1,7 @@
 import os
 
-APP_NAME        = ""
-APP_DESCRIPTION = ""
-APP_VERSION     = ""
+APP_NAME        = "ScanService"
+APP_DESCRIPTION = "SAST / DAST scan orchestrator for CyberCore"
+APP_VERSION     = "0.1.0"
 
-# Comma separated list of trusted origins for CORS. If not provided, defaults to
-# ``http://localhost`` which is suitable for local development.
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS","http://127.0.0.1:8001").split(",")
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")

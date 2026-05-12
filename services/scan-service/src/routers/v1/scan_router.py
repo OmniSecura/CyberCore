@@ -1,0 +1,184 @@
+from __future__ import annotations
+
+import os
+from typing import Optional
+
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, Form, status
+from sqlalchemy.orm import Session
+
+from ...database.db_connection import get_db
+from ...schemas.scan import (
+    SubmitGitScanRequest,
+    ScanJobOut,
+    ScanJobDetailOut,
+    ScanJobListOut,
+    FindingsListOut,
+)
+from ...security.org_privilege import require_org_privilege
+from ...security.current_user import get_current_user_id
+from ...services.scan_service import ScanService
+
+scan_router = APIRouter(tags=["Scans"])
+
+ORG_SERVICE_URL = os.getenv("ORG_SERVICE_URL", "http://localhost:8081")
+
+
+async def _resolve_org_id(slug: str, request: Request) -> str:
+    """Resolve org slug → UUID via organization service (forwards auth cookies)."""
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"{ORG_SERVICE_URL}/api/v1/organizations/{slug}",
+                cookies=request.cookies,
+                timeout=5.0,
+            )
+        if r.is_success:
+            return r.json()["id"]
+        if r.status_code == 404:
+            raise HTTPException(status_code=404, detail="Organization not found")
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+    raise HTTPException(status_code=502, detail="Organization service unavailable")
+
+
+def _svc(db: Session = Depends(get_db)) -> ScanService:
+    return ScanService(db)
+
+
+# ── Submit git scan ────────────────────────────────────────────────────────────
+
+@scan_router.post(
+    "/organizations/{slug}/scans/git",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=ScanJobOut,
+)
+async def submit_git_scan(
+    slug: str,
+    request: Request,
+    body: SubmitGitScanRequest,
+    user_id: str = Depends(get_current_user_id),
+    svc: ScanService = Depends(_svc),
+    _priv: None = require_org_privilege("scans.run"),
+):
+    org_id = await _resolve_org_id(slug, request)
+    return svc.submit_git_scan(org_id, user_id, body)
+
+
+# ── Submit upload scan ─────────────────────────────────────────────────────────
+
+@scan_router.post(
+    "/organizations/{slug}/scans/upload",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=ScanJobOut,
+)
+async def submit_upload_scan(
+    slug: str,
+    request: Request,
+    name: str = Form(...),
+    file: UploadFile = File(..., description="ZIP archive of the source code"),
+    user_id: str = Depends(get_current_user_id),
+    svc: ScanService = Depends(_svc),
+    _priv: None = require_org_privilege("scans.run"),
+):
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Only .zip uploads are accepted")
+    org_id = await _resolve_org_id(slug, request)
+    return await svc.submit_upload_scan(org_id, user_id, name, file)
+
+
+# ── List scans ─────────────────────────────────────────────────────────────────
+
+@scan_router.get(
+    "/organizations/{slug}/scans",
+    response_model=ScanJobListOut,
+)
+async def list_scans(
+    slug: str,
+    request: Request,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
+    status_filter: Optional[str] = Query(default=None, alias="status"),
+    svc: ScanService = Depends(_svc),
+    _priv: None = require_org_privilege("scans.view"),
+):
+    org_id = await _resolve_org_id(slug, request)
+    total, items = svc.list_jobs(org_id, offset, limit, status_filter)
+    return ScanJobListOut(total=total, items=items)
+
+
+# ── Get scan detail ────────────────────────────────────────────────────────────
+
+@scan_router.get(
+    "/organizations/{slug}/scans/{job_id}",
+    response_model=ScanJobDetailOut,
+)
+async def get_scan(
+    slug: str,
+    job_id: str,
+    request: Request,
+    svc: ScanService = Depends(_svc),
+    _priv: None = require_org_privilege("scans.view"),
+):
+    org_id = await _resolve_org_id(slug, request)
+    return svc.get_job(org_id, job_id)
+
+
+# ── List findings ──────────────────────────────────────────────────────────────
+
+@scan_router.get(
+    "/organizations/{slug}/scans/{job_id}/findings",
+    response_model=FindingsListOut,
+)
+async def list_findings(
+    slug: str,
+    job_id: str,
+    request: Request,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    severity: Optional[str] = Query(default=None),
+    tool: Optional[str] = Query(default=None),
+    svc: ScanService = Depends(_svc),
+    _priv: None = require_org_privilege("scans.view"),
+):
+    org_id = await _resolve_org_id(slug, request)
+    total, items, severity_counts = svc.list_findings(
+        org_id, job_id, offset, limit, severity, tool
+    )
+    return FindingsListOut(total=total, items=items, severity_counts=severity_counts)
+
+
+# ── Cancel scan ────────────────────────────────────────────────────────────────
+
+@scan_router.post(
+    "/organizations/{slug}/scans/{job_id}/cancel",
+    response_model=ScanJobOut,
+)
+async def cancel_scan(
+    slug: str,
+    job_id: str,
+    request: Request,
+    svc: ScanService = Depends(_svc),
+    _priv: None = require_org_privilege("scans.manage"),
+):
+    org_id = await _resolve_org_id(slug, request)
+    return svc.cancel_job(org_id, job_id)
+
+
+# ── Delete scan ────────────────────────────────────────────────────────────────
+
+@scan_router.delete(
+    "/organizations/{slug}/scans/{job_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_scan(
+    slug: str,
+    job_id: str,
+    request: Request,
+    svc: ScanService = Depends(_svc),
+    _priv: None = require_org_privilege("scans.manage"),
+):
+    org_id = await _resolve_org_id(slug, request)
+    svc.delete_job(org_id, job_id)
