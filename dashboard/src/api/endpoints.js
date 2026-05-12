@@ -67,6 +67,25 @@ export const roleApi = {
   remove:         (slug, roleId)              => api.delete(`/organizations/roles/${slug}/${roleId}`),
 }
 
+// ── Scans ─────────────────────────────────────────────────────────────────────
+export const scanApi = {
+  list: (slug, { offset = 0, limit = 20, status } = {}) => {
+    const qs = new URLSearchParams({ offset, limit })
+    if (status) qs.set('status', status)
+    return api.get(`/scans/organizations/${slug}/scans?${qs}`)
+  },
+  get:      (slug, jobId)  => api.get(`/scans/organizations/${slug}/scans/${jobId}`),
+  findings: (slug, jobId, { offset = 0, limit = 200, severity, tool } = {}) => {
+    const qs = new URLSearchParams({ offset, limit })
+    if (severity) qs.set('severity', severity)
+    if (tool)     qs.set('tool', tool)
+    return api.get(`/scans/organizations/${slug}/scans/${jobId}/findings?${qs}`)
+  },
+  submitGit: (slug, data)  => api.post(`/scans/organizations/${slug}/scans/git`, data),
+  cancel:    (slug, jobId) => api.post(`/scans/organizations/${slug}/scans/${jobId}/cancel`),
+  remove:    (slug, jobId) => api.delete(`/scans/organizations/${slug}/scans/${jobId}`),
+}
+
 // ── Email ─────────────────────────────────────────────────────────────────
 export const emailApi = {
   verifyEmail:          (token)    => api.post("/email/verify", { token }),

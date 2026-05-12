@@ -19,7 +19,7 @@ from ...security.org_privilege import require_org_privilege
 from ...security.current_user import get_current_user_id
 from ...services.scan_service import ScanService
 
-scan_router = APIRouter(tags=["Scans"])
+scan_router = APIRouter(prefix="/scans",tags=["Scans"])
 
 ORG_SERVICE_URL = os.getenv("ORG_SERVICE_URL", "http://localhost:8081")
 
