@@ -43,9 +43,10 @@ export const orgApi = {
 
 // ── Members & invites ─────────────────────────────────────────────────────
 export const memberApi = {
-  list:         (slug)                 => api.get(`/organizations/members/${slug}/members`),
-  updateRole:   (slug, userId, role)   => api.patch(`/organizations/members/${slug}/members/${userId}`, { role }),
-  remove:       (slug, userId)         => api.delete(`/organizations/members/${slug}/members/${userId}`),
+  list:         (slug)                   => api.get(`/organizations/members/${slug}/members`),
+  // payload: { role: "admin"|"member"|"viewer" } OR { custom_role_id: "uuid" }
+  updateRole:   (slug, userId, payload)  => api.patch(`/organizations/members/${slug}/members/${userId}`, payload),
+  remove:       (slug, userId)           => api.delete(`/organizations/members/${slug}/members/${userId}`),
 }
 
 export const inviteApi = {
@@ -53,6 +54,17 @@ export const inviteApi = {
   create:  (slug, email, role)    => api.post(`/organizations/members/${slug}/invites`, { email, role }),
   revoke:  (slug, inviteId)       => api.delete(`/organizations/members/${slug}/invites/${inviteId}`),
   accept:  (token)                => api.post('/invites/accept', { token }),
+}
+
+// ── Custom Roles ──────────────────────────────────────────────────────────
+export const roleApi = {
+  listPrivileges: ()                          => api.get('/organizations/roles/privileges'),
+  // Returns { privileges: ["members.view", ...] } for the current user in this org
+  myPrivileges:   (slug)                      => api.get(`/organizations/roles/${slug}/my-privileges`),
+  list:           (slug)                      => api.get(`/organizations/roles/${slug}`),
+  create:         (slug, data)                => api.post(`/organizations/roles/${slug}`, data),
+  update:         (slug, roleId, data)        => api.patch(`/organizations/roles/${slug}/${roleId}`, data),
+  remove:         (slug, roleId)              => api.delete(`/organizations/roles/${slug}/${roleId}`),
 }
 
 // ── Email ─────────────────────────────────────────────────────────────────

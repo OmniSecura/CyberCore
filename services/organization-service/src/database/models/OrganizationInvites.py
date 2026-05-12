@@ -12,7 +12,7 @@ class OrganizationInvite(TimestampMixin, Base):
         String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
     organization_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("organization.id", ondelete="CASCADE"), nullable=False
+        String(36), nullable=False
     )
 
     # Email the invite was sent to — may not have a user account yet
@@ -23,7 +23,7 @@ class OrganizationInvite(TimestampMixin, Base):
 
     # user_id of the person who sent the invite
     invited_by: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        String(36), nullable=False
     )
 
     # SHA-256 hash of the plaintext token sent by email — never store plaintext

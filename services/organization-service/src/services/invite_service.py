@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from ..database.models.Organization import Organization
 from ..database.models.OrganizationInvites import OrganizationInvite
 from ..database.models.OrganizationUsers import OrganizationUser
+from ..privileges import require_privilege
 from ..utils.email_client import OrgEmailClient
 
 logger = logging.getLogger(__name__)
@@ -23,19 +24,6 @@ def _get_active_org(db: Session, slug: str) -> Organization:
         raise LookupError("Organization not found")
     return org
 
-def _require_admin_or_owner(db: Session, org: Organization, user_id: str) -> None:
-    if org.owner_id == user_id:
-        return
-    member = (
-        db.query(OrganizationUser)
-        .filter(
-            OrganizationUser.organization_id == org.id,
-            OrganizationUser.user_id == user_id,
-        )
-        .first()
-    )
-    if not member or member.role != "admin":
-        raise PermissionError("Only owners and admins can perform this action")
 
 class InviteService:
 
@@ -51,7 +39,7 @@ class InviteService:
         role: str,
     ) -> OrganizationInvite:
         org = _get_active_org(self.db, slug)
-        _require_admin_or_owner(self.db, org, actor_id)
+        require_privilege(self.db, org, actor_id, "members.invite")
 
         existing = (
             self.db.query(OrganizationInvite)
@@ -89,14 +77,13 @@ class InviteService:
                 token=token,
             )
         except Exception as exc:
-            # Log but don't fail — invite is valid, admin can resend
             logger.warning("Invite email failed for %s: %s", email, exc)
 
         return invite
 
     def list_invites(self, slug: str, actor_id: str) -> list[OrganizationInvite]:
         org = _get_active_org(self.db, slug)
-        _require_admin_or_owner(self.db, org, actor_id)
+        require_privilege(self.db, org, actor_id, "members.invite")
         return (
             self.db.query(OrganizationInvite)
             .filter(
@@ -108,7 +95,7 @@ class InviteService:
 
     def revoke_invite(self, slug: str, invite_id: str, actor_id: str) -> None:
         org = _get_active_org(self.db, slug)
-        _require_admin_or_owner(self.db, org, actor_id)
+        require_privilege(self.db, org, actor_id, "members.invite")
 
         invite = (
             self.db.query(OrganizationInvite)

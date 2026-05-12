@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { orgApi, memberApi, inviteApi, userApi } from '../../api/endpoints'
+import { orgApi, memberApi, inviteApi, userApi, roleApi } from '../../api/endpoints'
 import { TransferOwnershipModal } from './TransferOwnershipModal'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -36,8 +36,7 @@ function MemberRow({ displayName, email, avatarSeed, roleSlot, actionSlot }) {
 
 const ROLE_LABEL = { owner: 'Owner', admin: 'Admin', member: 'Member', viewer: 'Viewer' }
 
-const canManageOrg     = (role) => role === 'owner'                                       // edit / delete / transfer
-const canManageMembers = (role) => role === 'owner' || role === 'admin'                   // invite / change roles / remove
+const canManageOrg = (role) => role === 'owner'
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
@@ -79,6 +78,16 @@ const IconWarn = () => (
 const IconPower = () => (
   <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
     <path d="M8 1.5v6"/><path d="M11.5 3.5a5 5 0 1 1-7 0"/>
+  </svg>
+)
+const IconEdit = () => (
+  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M11 2l3 3-8 8H3v-3z"/>
+  </svg>
+)
+const IconShield = () => (
+  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M8 1.5L2 4v4c0 3.5 2.7 5.8 6 6.5 3.3-.7 6-3 6-6.5V4z"/>
   </svg>
 )
 
@@ -245,6 +254,318 @@ function InviteModal({ slug, onClose, onCreated }) {
   )
 }
 
+// ─── Role modal (create / edit) ───────────────────────────────────────────────
+
+function RoleModal({ slug, existing, privilegeGroups, onClose, onSaved }) {
+  const [name, setName]           = useState(existing?.name || '')
+  const [desc, setDesc]           = useState(existing?.description || '')
+  const [color, setColor]         = useState(existing?.color || '#3B82F6')
+  const [selected, setSelected]   = useState(new Set(existing?.privileges || []))
+  const [loading, setLoading]     = useState(false)
+  const [error, setError]         = useState(null)
+
+  function togglePrivilege(key) {
+    setSelected(prev => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
+      return next
+    })
+  }
+
+  function toggleGroup(keys) {
+    const allOn = keys.every(k => selected.has(k))
+    setSelected(prev => {
+      const next = new Set(prev)
+      keys.forEach(k => allOn ? next.delete(k) : next.add(k))
+      return next
+    })
+  }
+
+  async function submit(e) {
+    e.preventDefault()
+    if (!name.trim()) return
+    setLoading(true)
+    setError(null)
+    const payload = {
+      name: name.trim(),
+      description: desc.trim() || null,
+      color: color || null,
+      privileges: [...selected],
+    }
+    try {
+      if (existing) {
+        await roleApi.update(slug, existing.id, payload)
+      } else {
+        await roleApi.create(slug, payload)
+      }
+      onSaved()
+    } catch (err) {
+      if (err?.status === 409) setError('A role with that name already exists.')
+      else setError(err?.data?.detail || 'Failed to save role.')
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="cc-overlay" onClick={e => e.target === e.currentTarget && !loading && onClose()}>
+      <div className="cc-modal cc-modal--wide" role="dialog" aria-modal="true">
+        <div className="cc-modal-head">
+          <div>
+            <div className="cc-modal-title">{existing ? 'Edit role' : 'Create custom role'}</div>
+            <div className="cc-modal-sub">Choose a name and select which privileges members with this role will have.</div>
+          </div>
+          <button className="cc-modal-x" onClick={onClose} disabled={loading} aria-label="Close"><IconX /></button>
+        </div>
+        <form onSubmit={submit}>
+          <div className="cc-modal-body">
+            {error && <Alert>{error}</Alert>}
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 12, alignItems: 'end' }}>
+              <div className="cc-mfield">
+                <label htmlFor="role-name">Role name <span style={{ color: '#E53E3E' }}>*</span></label>
+                <input
+                  id="role-name" type="text" value={name}
+                  onChange={e => setName(e.target.value)}
+                  maxLength={100} autoFocus autoComplete="off"
+                  placeholder="e.g. Security Analyst"
+                />
+              </div>
+              <div className="cc-mfield" style={{ minWidth: 56 }}>
+                <label htmlFor="role-color">Color</label>
+                <input
+                  id="role-color" type="color" value={color}
+                  onChange={e => setColor(e.target.value)}
+                  style={{ height: 42, width: 56, padding: 4, borderRadius: 9, border: '1.5px solid var(--border)', cursor: 'pointer', background: 'var(--bg)' }}
+                />
+              </div>
+            </div>
+
+            <div className="cc-mfield">
+              <label htmlFor="role-desc">Description</label>
+              <input
+                id="role-desc" type="text" value={desc}
+                onChange={e => setDesc(e.target.value)}
+                maxLength={200} placeholder="What is this role for?"
+              />
+            </div>
+
+            <div style={{ marginTop: 8 }}>
+              <div style={{ font: '500 12px/1 var(--font-body)', color: 'var(--fg-2)', marginBottom: 10, letterSpacing: '.01em' }}>
+                Privileges ({selected.size} selected)
+              </div>
+              <div className="cc-priv-groups">
+                {privilegeGroups.map(({ group, privileges }) => {
+                  const keys = privileges.map(p => p.key)
+                  const allOn = keys.every(k => selected.has(k))
+                  const someOn = keys.some(k => selected.has(k))
+                  return (
+                    <div key={group} className="cc-priv-group">
+                      <div className="cc-priv-group-head">
+                        <label className="cc-priv-check">
+                          <input
+                            type="checkbox"
+                            checked={allOn}
+                            ref={el => { if (el) el.indeterminate = !allOn && someOn }}
+                            onChange={() => toggleGroup(keys)}
+                          />
+                          <span className="cc-priv-group-name">{group}</span>
+                        </label>
+                      </div>
+                      <div className="cc-priv-list">
+                        {privileges.map(p => (
+                          <label key={p.key} className="cc-priv-check cc-priv-item">
+                            <input
+                              type="checkbox"
+                              checked={selected.has(p.key)}
+                              onChange={() => togglePrivilege(p.key)}
+                            />
+                            <span>{p.label}</span>
+                            <span className="cc-priv-key">{p.key}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+          <div className="cc-modal-foot">
+            <button type="button" className="cc-btn cc-btn-md cc-btn-ghost" onClick={onClose} disabled={loading}>Cancel</button>
+            <button type="submit" className="cc-btn cc-btn-md cc-btn-primary" disabled={loading || !name.trim()}>
+              {loading ? <><span className="cc-spin" /> Saving…</> : (existing ? 'Save changes' : 'Create role')}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ─── Roles tab ────────────────────────────────────────────────────────────────
+
+function RolesTab({ org, has }) {
+  const [roles, setRoles]                 = useState([])
+  const [privilegeGroups, setPrivGroups]  = useState([])
+  const [loading, setLoading]             = useState(true)
+  const [error, setError]                 = useState(null)
+  const [showCreate, setShowCreate]       = useState(false)
+  const [editingRole, setEditingRole]     = useState(null)
+  const [confirmDel, setConfirmDel]       = useState(null)
+  const [deleting, setDeleting]           = useState(false)
+
+  const reload = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const [rolesRes, privRes] = await Promise.all([
+        roleApi.list(org.organization_slug),
+        roleApi.listPrivileges(),
+      ])
+      setRoles(Array.isArray(rolesRes) ? rolesRes : [])
+      setPrivGroups(Array.isArray(privRes) ? privRes : [])
+    } catch (err) {
+      setError(err?.data?.detail || 'Failed to load roles.')
+    } finally {
+      setLoading(false)
+    }
+  }, [org.organization_slug])
+
+  useEffect(() => { reload() }, [reload])
+
+  async function doDelete() {
+    if (!confirmDel) return
+    setDeleting(true)
+    try {
+      await roleApi.remove(org.organization_slug, confirmDel.id)
+      setRoles(prev => prev.filter(r => r.id !== confirmDel.id))
+      setConfirmDel(null)
+    } catch (err) {
+      setError(err?.data?.detail || 'Failed to delete role.')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  const totalPrivileges = privilegeGroups.reduce((n, g) => n + g.privileges.length, 0)
+
+  return (
+    <>
+      {error && <Alert>{error}</Alert>}
+
+      <div className="cc-section">
+        <div className="cc-section-head cc-section-head--row">
+          <span>Custom roles ({roles.length})</span>
+          {has('roles.manage') && (
+            <button className="cc-btn cc-btn-sm cc-btn-primary" onClick={() => setShowCreate(true)}>
+              <IconPlus /> New role
+            </button>
+          )}
+        </div>
+
+        {loading ? (
+          <div className="cc-empty cc-empty--inline">
+            <span className="cc-skel" style={{ width: 200, height: 14, display: 'inline-block' }} />
+          </div>
+        ) : roles.length === 0 ? (
+          <div className="cc-empty cc-empty--inline">
+            <div className="cc-empty-title">No custom roles yet</div>
+            <div className="cc-empty-sub">Create roles to give members fine-grained access to specific features.</div>
+          </div>
+        ) : (
+          <div className="cc-role-list">
+            {roles.map(role => (
+              <div key={role.id} className="cc-role-card">
+                <div className="cc-role-card-head">
+                  <span
+                    className="cc-role-dot"
+                    style={{ background: role.color || '#8899AA' }}
+                  />
+                  <span className="cc-role-card-name">{role.name}</span>
+                  <span className="cc-role-card-count">
+                    {role.privileges.length}/{totalPrivileges} privileges
+                  </span>
+                  {has('roles.manage') && (
+                    <div className="cc-role-card-actions">
+                      <button
+                        className="cc-icon-btn"
+                        onClick={() => setEditingRole(role)}
+                        title="Edit role"
+                      >
+                        <IconEdit />
+                      </button>
+                      <button
+                        className="cc-icon-danger"
+                        onClick={() => setConfirmDel(role)}
+                        title="Delete role"
+                      >
+                        <IconTrash />
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {role.description && (
+                  <div className="cc-role-card-desc">{role.description}</div>
+                )}
+                {role.privileges.length > 0 && (
+                  <div className="cc-role-card-privs">
+                    {role.privileges.map(p => (
+                      <span key={p} className="cc-priv-tag">{p}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="cc-section" style={{ marginTop: 16 }}>
+        <div className="cc-section-head">Available privileges</div>
+        <div style={{ font: '400 13px/1.55 var(--font-body)', color: 'var(--fg-2)', padding: '10px 18px 0' }}>
+          {totalPrivileges} privileges across {privilegeGroups.length} categories.
+          New feature privileges (e.g. Scans, Alerts) appear here automatically when added to the system.
+        </div>
+        <div className="cc-priv-readonly-groups">
+          {privilegeGroups.map(({ group, privileges }) => (
+            <div key={group} className="cc-priv-readonly-group">
+              <div className="cc-priv-readonly-head">{group}</div>
+              {privileges.map(p => (
+                <div key={p.key} className="cc-priv-readonly-row">
+                  <span className="cc-priv-readonly-label">{p.label}</span>
+                  <span className="cc-priv-key">{p.key}</span>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {has('roles.manage') && (showCreate || editingRole) && (
+        <RoleModal
+          slug={org.organization_slug}
+          existing={editingRole}
+          privilegeGroups={privilegeGroups}
+          onClose={() => { setShowCreate(false); setEditingRole(null) }}
+          onSaved={() => { setShowCreate(false); setEditingRole(null); reload() }}
+        />
+      )}
+
+      {confirmDel && (
+        <ConfirmModal
+          title={`Delete role "${confirmDel.name}"?`}
+          message="Members assigned this role will revert to their base role (Member). This cannot be undone."
+          confirmLabel="Delete role"
+          danger
+          loading={deleting}
+          onConfirm={doDelete}
+          onClose={() => setConfirmDel(null)}
+        />
+      )}
+    </>
+  )
+}
+
 // ─── Overview tab ─────────────────────────────────────────────────────────────
 
 function OverviewTab({ org }) {
@@ -309,35 +630,42 @@ function OverviewTab({ org }) {
 
 // ─── Members tab ─────────────────────────────────────────────────────────────
 
-function MembersTab({ org, currentRole, ownerId, currentUserId }) {
-  const [members, setMembers]     = useState([])    // [{ user_id, role, email?, full_name? }]
-  const [ownerProfile, setOwner]  = useState(null)  // { id, email, full_name }
-  const [invites, setInvites]     = useState([])
-  const [loading, setLoading]     = useState(true)
-  const [error, setError]         = useState(null)
-  const [showInvite, setShowInv]  = useState(false)
-  const [confirmRm, setConfirmRm] = useState(null)
+function MembersTab({ org, currentRole, ownerId, currentUserId, has }) {
+  const [members, setMembers]         = useState([])
+  const [ownerProfile, setOwner]      = useState(null)
+  const [invites, setInvites]         = useState([])
+  const [customRoles, setCustomRoles] = useState([])
+  const [loading, setLoading]         = useState(true)
+  const [error, setError]             = useState(null)
+  const [showInvite, setShowInv]      = useState(false)
+  const [confirmRm, setConfirmRm]     = useState(null)
   const [confirmRevoke, setConfirmRevoke] = useState(null)
-  const [busy, setBusy]           = useState(false)
+  const [busy, setBusy]               = useState(false)
 
-  const canManage = canManageMembers(currentRole)
+  const canInvite      = has('members.invite')
+  const canRemove      = has('members.remove')
+  const canManageRoles = has('members.manage_roles')
+  const canViewInvites = has('members.invite')
 
   const reload = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const mRes = await memberApi.list(org.organization_slug)
+      const [mRes, rolesRes] = await Promise.all([
+        memberApi.list(org.organization_slug),
+        roleApi.list(org.organization_slug).catch(() => []),
+      ])
       const list = Array.isArray(mRes) ? mRes : []
       setMembers(list)
+      setCustomRoles(Array.isArray(rolesRes) ? rolesRes : [])
 
-      if (canManage) {
+      if (canViewInvites) {
         const iRes = await inviteApi.list(org.organization_slug)
         setInvites(Array.isArray(iRes) ? iRes : [])
       } else {
         setInvites([])
       }
 
-      // Resolve owner + member UUIDs into emails / full names in the background.
       const ids = [ownerId, ...list.map(m => m.user_id)].filter(Boolean)
       if (ids.length) {
         try {
@@ -356,17 +684,40 @@ function MembersTab({ org, currentRole, ownerId, currentUserId }) {
     } finally {
       setLoading(false)
     }
-  }, [org.organization_slug, canManage, ownerId])
+  }, [org.organization_slug, canViewInvites, ownerId])
 
   useEffect(() => { reload() }, [reload])
 
-  async function changeRole(userId, newRole) {
+  async function changeRole(userId, value) {
+    // value is either a built-in role ("admin","member","viewer")
+    // or "custom:uuid" for a custom role
+    const isCustom = value.startsWith('custom:')
+    const payload = isCustom
+      ? { custom_role_id: value.slice(7) }
+      : { role: value }
     try {
-      await memberApi.updateRole(org.organization_slug, userId, newRole)
-      setMembers(prev => prev.map(m => m.user_id === userId ? { ...m, role: newRole } : m))
+      await memberApi.updateRole(org.organization_slug, userId, payload)
+      if (isCustom) {
+        const crid = value.slice(7)
+        setMembers(prev => prev.map(m => m.user_id === userId ? { ...m, role: 'member', custom_role_id: crid } : m))
+      } else {
+        setMembers(prev => prev.map(m => m.user_id === userId ? { ...m, role: value, custom_role_id: null } : m))
+      }
     } catch (err) {
       setError(err?.data?.detail || 'Failed to update role.')
     }
+  }
+
+  function getMemberRoleValue(m) {
+    return m.custom_role_id ? `custom:${m.custom_role_id}` : m.role
+  }
+
+  function getMemberRoleLabel(m) {
+    if (m.custom_role_id) {
+      const cr = customRoles.find(r => r.id === m.custom_role_id)
+      return cr ? cr.name : 'Custom'
+    }
+    return ROLE_LABEL[m.role] || m.role
   }
 
   async function doRemove() {
@@ -404,7 +755,7 @@ function MembersTab({ org, currentRole, ownerId, currentUserId }) {
       <div className="cc-section">
         <div className="cc-section-head cc-section-head--row">
           <span>Members ({members.length + 1})</span>
-          {canManage && (
+          {canInvite && (
             <button className="cc-btn cc-btn-sm cc-btn-primary" onClick={() => setShowInv(true)}>
               <IconPlus />
               Invite
@@ -432,7 +783,7 @@ function MembersTab({ org, currentRole, ownerId, currentUserId }) {
 
             {members.map(m => {
               const isSelf         = m.user_id === currentUserId
-              const youCanEditThis = canManage && !isSelf
+              const youCanEditThis = canManageRoles && !isSelf
               const displayName    = isSelf ? 'You' : (m.full_name || m.email || 'Member')
               return (
                 <MemberRow
@@ -444,21 +795,37 @@ function MembersTab({ org, currentRole, ownerId, currentUserId }) {
                     youCanEditThis ? (
                       <select
                         className="cc-role-select"
-                        value={m.role}
+                        value={getMemberRoleValue(m)}
                         onChange={e => changeRole(m.user_id, e.target.value)}
                       >
-                        <option value="admin">Admin</option>
-                        <option value="member">Member</option>
-                        <option value="viewer">Viewer</option>
+                        <optgroup label="Built-in">
+                          <option value="admin">Admin</option>
+                          <option value="member">Member</option>
+                          <option value="viewer">Viewer</option>
+                        </optgroup>
+                        {customRoles.length > 0 && (
+                          <optgroup label="Custom roles">
+                            {customRoles.map(cr => (
+                              <option key={cr.id} value={`custom:${cr.id}`}>{cr.name}</option>
+                            ))}
+                          </optgroup>
+                        )}
                       </select>
                     ) : (
-                      <span className={`cc-role-pill cc-role-${m.role}`}>
-                        {ROLE_LABEL[m.role] || m.role}
+                      <span
+                        className={`cc-role-pill ${m.custom_role_id ? '' : `cc-role-${m.role}`}`}
+                        style={m.custom_role_id ? {
+                          background: (customRoles.find(r => r.id === m.custom_role_id)?.color || '#8899AA') + '22',
+                          color: customRoles.find(r => r.id === m.custom_role_id)?.color || '#8899AA',
+                          borderColor: (customRoles.find(r => r.id === m.custom_role_id)?.color || '#8899AA') + '44',
+                        } : undefined}
+                      >
+                        {getMemberRoleLabel(m)}
                       </span>
                     )
                   }
                   actionSlot={
-                    (canManage || isSelf) && (
+                    (canRemove || isSelf) && (
                       <button
                         className="cc-icon-danger"
                         onClick={() => setConfirmRm(m)}
@@ -475,7 +842,7 @@ function MembersTab({ org, currentRole, ownerId, currentUserId }) {
         )}
       </div>
 
-      {canManage && (
+      {canViewInvites && (
         <div className="cc-section" style={{ marginTop: 16 }}>
           <div className="cc-section-head">Pending invites ({invites.length})</div>
           {loading ? null : invites.length === 0 ? (
@@ -732,41 +1099,65 @@ function SettingsTab({ org, currentRole, onUpdated, onDeleted }) {
 
 // ─── OrgDashboard root ────────────────────────────────────────────────────────
 
+// Each tab declares its own visibility rule.
+// `visible({ role, has, loaded })` — called after privileges are resolved.
+// `loaded` is false until the my-privileges API responds; privilege-gated tabs
+// wait for it so they don't flash then disappear.
 const TABS = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'members',  label: 'Members'  },
-  { id: 'settings', label: 'Settings' },
+  { id: 'overview', label: 'Overview',  visible: ()                       => true },
+  { id: 'members',  label: 'Members',   visible: ()                       => true },
+  { id: 'roles',    label: 'Roles',     visible: ({ has, loaded })        => loaded && (has('roles.view') || has('roles.manage')) },
+  { id: 'settings', label: 'Settings',  visible: ({ role })               => canManageOrg(role) },
 ]
 
 export function OrgDashboard({ org: initialOrg, onBack, onOrgChanged, currentUserId }) {
-  const [org, setOrg] = useState(initialOrg)
-  const [tab, setTab] = useState('overview')
-  const [fresh, setFresh] = useState(null)
+  const [org, setOrg]           = useState(initialOrg)
+  const [tab, setTab]           = useState('overview')
   const [freshErr, setFreshErr] = useState(null)
+  const [privileges, setPrivileges] = useState(new Set())
+  const [privsLoaded, setPrivsLoaded] = useState(false)
 
-  // Refetch org to get authoritative role + member_count
+  // Stable checker — components can safely list `has` in dependency arrays
+  const has = useCallback((p) => privileges.has(p), [privileges])
+
   useEffect(() => {
     let cancelled = false
-    orgApi.get(initialOrg.organization_slug)
-      .then(detail => {
-        if (!cancelled) {
-          setFresh(detail)
-          setOrg(prev => ({ ...prev, ...detail }))
-        }
-      })
-      .catch(err => {
-        if (!cancelled) setFreshErr(err?.data?.detail || 'Failed to load organization details.')
-      })
+    Promise.all([
+      orgApi.get(initialOrg.organization_slug),
+      roleApi.myPrivileges(initialOrg.organization_slug),
+    ]).then(([detail, privData]) => {
+      if (!cancelled) {
+        setOrg(prev => ({ ...prev, ...detail }))
+        setPrivileges(new Set(privData?.privileges || []))
+        setPrivsLoaded(true)
+      }
+    }).catch(err => {
+      if (!cancelled) {
+        setFreshErr(err?.data?.detail || 'Failed to load organization details.')
+        setPrivsLoaded(true) // unblock tabs even on error
+      }
+    })
     return () => { cancelled = true }
   }, [initialOrg.organization_slug])
 
   const role = org.role || 'viewer'
   const plan = org.plan || 'free'
 
+  // If the current tab becomes invisible after privileges load, reset to overview
+  useEffect(() => {
+    if (!privsLoaded) return
+    const current = TABS.find(t => t.id === tab)
+    if (current && !current.visible({ role, has, loaded: privsLoaded })) {
+      setTab('overview')
+    }
+  }, [privsLoaded, role, has, tab])
+
   function handleUpdated(updated) {
     setOrg(prev => ({ ...prev, ...updated }))
     onOrgChanged?.({ ...org, ...updated })
   }
+
+  const visibleTabs = TABS.filter(t => t.visible({ role, has, loaded: privsLoaded }))
 
   return (
     <div>
@@ -800,7 +1191,6 @@ export function OrgDashboard({ org: initialOrg, onBack, onOrgChanged, currentUse
               setOrg(prev => ({ ...prev, ...updated }))
               onOrgChanged?.({ ...org, ...updated })
             }).catch(() => {
-              // fall back to optimistic update
               const next = { ...org, is_active: true }
               setOrg(next)
               onOrgChanged?.(next)
@@ -810,7 +1200,7 @@ export function OrgDashboard({ org: initialOrg, onBack, onOrgChanged, currentUse
       )}
 
       <div className="cc-tabs" role="tablist">
-        {TABS.filter(t => t.id !== 'settings' || canManageOrg(role)).map(t => (
+        {visibleTabs.map(t => (
           <button
             key={t.id}
             className={`cc-tab${tab === t.id ? ' cc-tab--on' : ''}`}
@@ -825,13 +1215,17 @@ export function OrgDashboard({ org: initialOrg, onBack, onOrgChanged, currentUse
       {freshErr && <Alert>{freshErr}</Alert>}
 
       {tab === 'overview' && <OverviewTab org={org} />}
-      {tab === 'members'  && (
+      {tab === 'members' && (
         <MembersTab
           org={org}
           currentRole={role}
           ownerId={org.owner_id}
           currentUserId={currentUserId}
+          has={has}
         />
+      )}
+      {tab === 'roles' && (has('roles.view') || has('roles.manage')) && (
+        <RolesTab org={org} has={has} />
       )}
       {tab === 'settings' && canManageOrg(role) && (
         <SettingsTab

@@ -873,3 +873,109 @@
   color: #8899AA; background: #ECF2F8;
   padding: 3px 7px; border-radius: 4px; white-space: nowrap;
 }
+
+/* ─── Custom roles ────────────────────────────────────────────────────────── */
+
+/* Wide modal variant for the privilege picker */
+.cc-modal--wide { max-width: 640px; width: 100%; }
+
+/* Role card list */
+.cc-role-list { display: flex; flex-direction: column; gap: 10px; padding: 14px 18px; }
+
+.cc-role-card {
+  border: 1px solid #E6EEF6; border-radius: 9px;
+  padding: 12px 14px;
+  background: #F9FBFD;
+}
+.cc-role-card-head {
+  display: flex; align-items: center; gap: 10px;
+}
+.cc-role-dot {
+  width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+}
+.cc-role-card-name {
+  font: 600 13px/1 var(--font-body); color: #0A1628; flex: 1;
+}
+.cc-role-card-count {
+  font: 400 11px/1 var(--font-body); color: #8899AA; white-space: nowrap;
+}
+.cc-role-card-actions { display: flex; gap: 4px; }
+
+.cc-role-card-desc {
+  font: 400 12px/1.4 var(--font-body); color: #4A6080;
+  margin-top: 6px; padding-left: 20px;
+}
+.cc-role-card-privs {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  margin-top: 8px; padding-left: 20px;
+}
+
+/* Generic icon button (non-danger) */
+.cc-icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 7px;
+  border: none; background: transparent; cursor: pointer;
+  color: #8899AA; transition: background 120ms, color 120ms;
+}
+.cc-icon-btn:hover { background: #ECF2F8; color: #4A6080; }
+.cc-icon-btn svg { width: 14px; height: 14px; }
+
+/* Privilege tag (read-only badge on role card) */
+.cc-priv-tag {
+  font: 500 10px/1 var(--font-mono);
+  color: #4A6080; background: #ECF2F8;
+  border: 1px solid #D8E8F4;
+  padding: 2px 6px; border-radius: 4px;
+  white-space: nowrap;
+}
+
+/* Privilege picker (in modal) */
+.cc-priv-groups {
+  display: flex; flex-direction: column; gap: 12px;
+  max-height: 320px; overflow-y: auto;
+  border: 1px solid #E6EEF6; border-radius: 9px;
+  padding: 12px 14px;
+  background: #F9FBFD;
+}
+.cc-priv-group-head { margin-bottom: 6px; }
+.cc-priv-group-name {
+  font: 600 12px/1 var(--font-body); color: #0A1628;
+  letter-spacing: .01em;
+}
+.cc-priv-list { display: flex; flex-direction: column; gap: 2px; padding-left: 4px; }
+
+.cc-priv-check {
+  display: flex; align-items: center; gap: 8px;
+  cursor: pointer; user-select: none;
+}
+.cc-priv-check input[type=checkbox] { accent-color: #00C2CB; cursor: pointer; }
+
+.cc-priv-item {
+  padding: 4px 6px; border-radius: 6px;
+  font: 400 12.5px/1 var(--font-body); color: #0A1628;
+  transition: background 100ms;
+}
+.cc-priv-item:hover { background: #ECF2F8; }
+.cc-priv-item span:last-child { margin-left: auto; }
+
+.cc-priv-key {
+  font: 400 10.5px/1 var(--font-mono); color: #8899AA;
+  white-space: nowrap;
+}
+
+/* Read-only privilege reference list (below role list) */
+.cc-priv-readonly-groups {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px; padding: 14px 18px;
+}
+.cc-priv-readonly-group { display: flex; flex-direction: column; gap: 4px; }
+.cc-priv-readonly-head {
+  font: 600 11px/1 var(--font-body); color: #4A6080;
+  text-transform: uppercase; letter-spacing: .08em;
+  margin-bottom: 4px;
+}
+.cc-priv-readonly-row {
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 5px 8px; border-radius: 6px; background: #F4F8FC;
+}
+.cc-priv-readonly-label { font: 400 12px/1.3 var(--font-body); color: #0A1628; }
