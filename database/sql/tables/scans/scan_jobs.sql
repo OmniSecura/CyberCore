@@ -5,6 +5,7 @@
 -- scan_jobs: one row per submitted scan
 -- Scans are always scoped to an organization and a user who triggered them.
 -- The celery_task_id links this row to the async worker result in Redis.
+
 CREATE TABLE scan_jobs (
     id                  CHAR(36)        NOT NULL DEFAULT (UUID()),
     organization_id     CHAR(36)        NOT NULL,
@@ -39,13 +40,8 @@ CREATE TABLE scan_jobs (
 
     PRIMARY KEY (id),
 
-    CONSTRAINT fk_scan_jobs_org
-        FOREIGN KEY (organization_id) REFERENCES organization(id)
-        ON DELETE CASCADE,
-
-    CONSTRAINT fk_scan_jobs_user
-        FOREIGN KEY (created_by) REFERENCES users(id)
-        ON DELETE CASCADE,
+    -- No FK on organization_id — org validation is handled by the organization service.
+    -- No FK on created_by — user validation is handled by the auth service.
 
     CONSTRAINT chk_scan_jobs_status
         CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled')),
