@@ -3,10 +3,11 @@ from fastapi_utils.cbv import cbv
 from sqlalchemy.orm import Session
 
 from ...database.db_connection import get_db
+from ...database.models.Organization import Organization
 from ...security.auth_client import get_current_user
 from ...services.role_service import RoleService
 from ...schemas.role import CreateRoleRequest, UpdateRoleRequest, RoleResponse
-from ...privileges import get_registry_for_api
+from ...privileges import get_registry_for_api, get_user_privileges
 
 role_router = APIRouter(prefix="/organizations/roles", tags=["Roles"])
 
@@ -15,12 +16,36 @@ def _role_svc(db: Session = Depends(get_db)) -> RoleService:
     return RoleService(db)
 
 
+def _get_active_org(db: Session, slug: str) -> Organization:
+    org = (
+        db.query(Organization)
+        .filter(Organization.organization_slug == slug, Organization.deleted_at.is_(None))
+        .first()
+    )
+    if not org:
+        raise LookupError("Organization not found")
+    return org
+
+
 @role_router.get("/privileges", status_code=status.HTTP_200_OK)
 async def list_privileges():
-    """Returns all available privileges grouped by category.
-    No auth required — the list is not secret and is needed on invite/role forms.
-    """
+    """Returns all available privileges grouped by category."""
     return get_registry_for_api()
+
+
+@role_router.get("/{slug}/my-privileges", status_code=status.HTTP_200_OK)
+async def my_privileges(
+    slug: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Returns the set of privileges the current user has in this org."""
+    try:
+        org = _get_active_org(db, slug)
+        privs = get_user_privileges(db, org, current_user["id"])
+        return {"privileges": sorted(privs)}
+    except LookupError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
 @cbv(role_router)

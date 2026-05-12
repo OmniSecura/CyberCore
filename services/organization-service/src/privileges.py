@@ -9,6 +9,13 @@ Format:
     "category.action": {"label": "Human-readable name", "group": "UI group header"}
 """
 
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+    from .database.models.Organization import Organization
+
 PRIVILEGE_REGISTRY: dict[str, dict[str, str]] = {
 
     # ── Members ───────────────────────────────────────────────────────────────
@@ -22,7 +29,7 @@ PRIVILEGE_REGISTRY: dict[str, dict[str, str]] = {
     "roles.manage": {"label": "Manage Custom Roles", "group": "Roles"},
 
     # ── Organization ─────────────────────────────────────────────────────────
-    "org.view":     {"label": "View Organization Details", "group": "Organization"},
+    "org.view":     {"label": "View Organization Details",  "group": "Organization"},
     "org.edit":     {"label": "Edit Organization Settings", "group": "Organization"},
 
     # ── Agents ────────────────────────────────────────────────────────────────
@@ -30,8 +37,8 @@ PRIVILEGE_REGISTRY: dict[str, dict[str, str]] = {
     "agents.manage": {"label": "Manage Agents", "group": "Agents"},
 
     # ── Scans ─────────────────────────────────────────────────────────────────
-    "scans.view":   {"label": "View Scans",               "group": "Scans"},
-    "scans.run":    {"label": "Run Scans",                "group": "Scans"},
+    "scans.view":   {"label": "View Scans",                "group": "Scans"},
+    "scans.run":    {"label": "Run Scans",                 "group": "Scans"},
     "scans.manage": {"label": "Manage Scan Configurations", "group": "Scans"},
 
     # ── Alerts ────────────────────────────────────────────────────────────────
@@ -44,7 +51,44 @@ PRIVILEGE_REGISTRY: dict[str, dict[str, str]] = {
 
 }
 
-ALL_PRIVILEGES = set(PRIVILEGE_REGISTRY.keys())
+ALL_PRIVILEGES: set[str] = set(PRIVILEGE_REGISTRY.keys())
+
+# ── Default privilege sets for built-in roles ─────────────────────────────────
+# To change what a built-in role can do, edit this dict.
+# Custom roles bypass this entirely — they carry their own explicit privilege list.
+
+DEFAULT_ROLE_PRIVILEGES: dict[str, set[str]] = {
+    "owner": ALL_PRIVILEGES,
+    "admin": {
+        "members.view",
+        "members.invite",
+        "members.remove",
+        "members.manage_roles",
+        "roles.view",
+        "org.view",
+        "org.edit",
+        "agents.view",
+        "agents.manage",
+        "scans.view",
+        "scans.run",
+        "scans.manage",
+        "alerts.view",
+        "alerts.manage",
+        "logs.view",
+        "logs.export",
+    },
+    "member": {
+        "members.view",
+        "org.view",
+        "agents.view",
+        "scans.view",
+        "alerts.view",
+        "logs.view",
+    },
+    "viewer": {
+        "org.view",
+    },
+}
 
 
 def is_valid_privilege(key: str) -> bool:
@@ -59,3 +103,50 @@ def get_registry_for_api() -> list[dict]:
         groups.setdefault(g, [])
         groups[g].append({"key": key, "label": meta["label"]})
     return [{"group": g, "privileges": privs} for g, privs in groups.items()]
+
+
+def get_user_privileges(db: "Session", org: "Organization", user_id: str) -> set[str]:
+    """
+    Returns the full set of privileges this user has in the given org.
+
+    Resolution order:
+      1. Owner → ALL privileges
+      2. Member with a custom role → that role's explicit privilege list
+      3. Member with a built-in role → DEFAULT_ROLE_PRIVILEGES[role]
+      4. Not a member → empty set
+    """
+    # Lazy import to avoid circular dependencies at module load time
+    from .database.models.OrganizationUsers import OrganizationUser
+    from .database.models.OrganizationRole import OrganizationRole
+
+    if org.owner_id == user_id:
+        return ALL_PRIVILEGES
+
+    member = (
+        db.query(OrganizationUser)
+        .filter(
+            OrganizationUser.organization_id == org.id,
+            OrganizationUser.user_id == user_id,
+        )
+        .first()
+    )
+    if not member:
+        return set()
+
+    if member.custom_role_id:
+        custom_role = (
+            db.query(OrganizationRole)
+            .filter(OrganizationRole.id == member.custom_role_id)
+            .first()
+        )
+        if custom_role:
+            return set(custom_role.privileges or [])
+
+    return DEFAULT_ROLE_PRIVILEGES.get(member.role, set())
+
+
+def require_privilege(db: "Session", org: "Organization", user_id: str, privilege: str) -> None:
+    """Raises PermissionError if the user does not have the required privilege."""
+    privs = get_user_privileges(db, org, user_id)
+    if privilege not in privs:
+        raise PermissionError(f"Missing privilege: {privilege}")
