@@ -18,7 +18,7 @@ def create_app() -> FastAPI:
         redoc_url=None,
     )
 
-    allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+    allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000, http://localhost:4173").split(",")
 
     app.add_middleware(
         CORSMiddleware,
