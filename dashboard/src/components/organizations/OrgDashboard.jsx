@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { orgApi, memberApi, inviteApi } from '../../api/endpoints'
+import { orgApi, memberApi, inviteApi, userApi } from '../../api/endpoints'
+import { TransferOwnershipModal } from './TransferOwnershipModal'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -9,7 +10,28 @@ function fmtDate(iso) {
 }
 
 function initials(name = '') {
-  return name.split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase() || '?'
+  return name
+    .split(/[\s@._-]/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(w => w[0])
+    .join('')
+    .toUpperCase() || '?'
+}
+
+// Compact member/owner row used by MembersTab.
+function MemberRow({ displayName, email, avatarSeed, roleSlot, actionSlot }) {
+  return (
+    <div className="cc-mrow">
+      <div className="cc-mrow-avatar">{initials(avatarSeed || displayName)}</div>
+      <div className="cc-mrow-main">
+        <div className="cc-mrow-title">{displayName}</div>
+        {email && <div className="cc-mrow-sub">{email}</div>}
+      </div>
+      {roleSlot}
+      {actionSlot}
+    </div>
+  )
 }
 
 const ROLE_LABEL = { owner: 'Owner', admin: 'Admin', member: 'Member', viewer: 'Viewer' }
@@ -288,7 +310,8 @@ function OverviewTab({ org }) {
 // ─── Members tab ─────────────────────────────────────────────────────────────
 
 function MembersTab({ org, currentRole, ownerId, currentUserId }) {
-  const [members, setMembers]     = useState([])
+  const [members, setMembers]     = useState([])    // [{ user_id, role, email?, full_name? }]
+  const [ownerProfile, setOwner]  = useState(null)  // { id, email, full_name }
   const [invites, setInvites]     = useState([])
   const [loading, setLoading]     = useState(true)
   const [error, setError]         = useState(null)
@@ -304,7 +327,8 @@ function MembersTab({ org, currentRole, ownerId, currentUserId }) {
     setError(null)
     try {
       const mRes = await memberApi.list(org.organization_slug)
-      setMembers(Array.isArray(mRes) ? mRes : [])
+      const list = Array.isArray(mRes) ? mRes : []
+      setMembers(list)
 
       if (canManage) {
         const iRes = await inviteApi.list(org.organization_slug)
@@ -312,12 +336,27 @@ function MembersTab({ org, currentRole, ownerId, currentUserId }) {
       } else {
         setInvites([])
       }
+
+      // Resolve owner + member UUIDs into emails / full names in the background.
+      const ids = [ownerId, ...list.map(m => m.user_id)].filter(Boolean)
+      if (ids.length) {
+        try {
+          const profiles = await userApi.lookup(ids)
+          const byId = Object.fromEntries((profiles || []).map(p => [p.id, p]))
+          setOwner(byId[ownerId] || null)
+          setMembers(list.map(m => ({
+            ...m,
+            email:     byId[m.user_id]?.email     ?? null,
+            full_name: byId[m.user_id]?.full_name ?? null,
+          })))
+        } catch { /* keep UUIDs as fallback */ }
+      }
     } catch (err) {
       setError(err?.data?.detail || 'Failed to load members.')
     } finally {
       setLoading(false)
     }
-  }, [org.organization_slug, canManage])
+  }, [org.organization_slug, canManage, ownerId])
 
   useEffect(() => { reload() }, [reload])
 
@@ -380,54 +419,56 @@ function MembersTab({ org, currentRole, ownerId, currentUserId }) {
         ) : (
           <div className="cc-mlist">
             {/* Owner row — synthetic, always shown */}
-            <div className="cc-mrow">
-              <div className="cc-mrow-avatar">{initials('Owner')}</div>
-              <div className="cc-mrow-main">
-                <div className="cc-mrow-title">
-                  {ownerId === currentUserId ? 'You' : 'Organization owner'}
-                </div>
-                <div className="cc-mrow-sub">{ownerId}</div>
-              </div>
-              <span className="cc-role-pill cc-role-owner">Owner</span>
-            </div>
+            <MemberRow
+              displayName={
+                ownerId === currentUserId
+                  ? 'You'
+                  : (ownerProfile?.full_name || 'Organization owner')
+              }
+              email={ownerProfile?.email}
+              avatarSeed={ownerProfile?.full_name || ownerProfile?.email || 'O'}
+              roleSlot={<span className="cc-role-pill cc-role-owner">Owner</span>}
+            />
 
             {members.map(m => {
-              const isSelf = m.user_id === currentUserId
+              const isSelf         = m.user_id === currentUserId
               const youCanEditThis = canManage && !isSelf
+              const displayName    = isSelf ? 'You' : (m.full_name || m.email || 'Member')
               return (
-                <div key={m.user_id} className="cc-mrow">
-                  <div className="cc-mrow-avatar">{initials(m.user_id)}</div>
-                  <div className="cc-mrow-main">
-                    <div className="cc-mrow-title">
-                      {isSelf ? 'You' : 'Member'}
-                    </div>
-                    <div className="cc-mrow-sub">{m.user_id}</div>
-                  </div>
-                  {youCanEditThis ? (
-                    <select
-                      className="cc-role-select"
-                      value={m.role}
-                      onChange={e => changeRole(m.user_id, e.target.value)}
-                    >
-                      <option value="admin">Admin</option>
-                      <option value="member">Member</option>
-                      <option value="viewer">Viewer</option>
-                    </select>
-                  ) : (
-                    <span className={`cc-role-pill cc-role-${m.role}`}>
-                      {ROLE_LABEL[m.role] || m.role}
-                    </span>
-                  )}
-                  {(canManage || isSelf) && (
-                    <button
-                      className="cc-icon-danger"
-                      onClick={() => setConfirmRm(m)}
-                      title={isSelf ? 'Leave organization' : 'Remove member'}
-                    >
-                      <IconTrash />
-                    </button>
-                  )}
-                </div>
+                <MemberRow
+                  key={m.user_id}
+                  displayName={displayName}
+                  email={m.email}
+                  avatarSeed={m.full_name || m.email || displayName}
+                  roleSlot={
+                    youCanEditThis ? (
+                      <select
+                        className="cc-role-select"
+                        value={m.role}
+                        onChange={e => changeRole(m.user_id, e.target.value)}
+                      >
+                        <option value="admin">Admin</option>
+                        <option value="member">Member</option>
+                        <option value="viewer">Viewer</option>
+                      </select>
+                    ) : (
+                      <span className={`cc-role-pill cc-role-${m.role}`}>
+                        {ROLE_LABEL[m.role] || m.role}
+                      </span>
+                    )
+                  }
+                  actionSlot={
+                    (canManage || isSelf) && (
+                      <button
+                        className="cc-icon-danger"
+                        onClick={() => setConfirmRm(m)}
+                        title={isSelf ? 'Leave organization' : 'Remove member'}
+                      >
+                        <IconTrash />
+                      </button>
+                    )
+                  }
+                />
               )
             })}
           </div>
@@ -516,6 +557,8 @@ function SettingsTab({ org, currentRole, onUpdated, onDeleted }) {
   const [msg, setMsg]     = useState(null)
   const [confirmDel, setConfirmDel] = useState(false)
   const [deleting, setDeleting]   = useState(false)
+  const [showTransfer, setShowTransfer]   = useState(false)
+  const [transferDone, setTransferDone]   = useState(false)
 
   if (!canEdit) {
     return (
@@ -615,6 +658,34 @@ function SettingsTab({ org, currentRole, onUpdated, onDeleted }) {
       </div>
 
       {org.is_active && (
+        <div className="cc-section" style={{ marginTop: 16 }}>
+          <div className="cc-section-head">Ownership</div>
+          <div className="cc-form-grid">
+            {transferDone && (
+              <Alert type="ok">
+                Transfer initiated. The recipient will receive an email with a confirmation link
+                (valid for 48&nbsp;hours). Ownership only changes once they accept.
+              </Alert>
+            )}
+            <p style={{ font: '400 13px/1.55 var(--font-body)', color: '#4A6080', margin: 0 }}>
+              Hand over ownership of this workspace to another member. They'll receive an
+              email and become the new owner once they accept; you'll be downgraded to admin
+              so you don't lose access.
+            </p>
+          </div>
+          <div className="cc-form-actions">
+            <button
+              type="button"
+              className="cc-btn cc-btn-md cc-btn-ghost"
+              onClick={() => setShowTransfer(true)}
+            >
+              Transfer ownership…
+            </button>
+          </div>
+        </div>
+      )}
+
+      {org.is_active && (
         <div className="cc-section cc-section--danger" style={{ marginTop: 16 }}>
           <div className="cc-section-head">Danger zone</div>
           <div className="cc-form-grid">
@@ -644,6 +715,15 @@ function SettingsTab({ org, currentRole, onUpdated, onDeleted }) {
           loading={deleting}
           onConfirm={doDelete}
           onClose={() => setConfirmDel(false)}
+        />
+      )}
+
+      {showTransfer && (
+        <TransferOwnershipModal
+          slug={org.organization_slug}
+          orgName={org.organization_name}
+          onClose={() => setShowTransfer(false)}
+          onTransferred={() => { setShowTransfer(false); setTransferDone(true) }}
         />
       )}
     </>

@@ -157,11 +157,15 @@ class OrganizationRouter:
         service: OrgService = Depends(_get_service),
     ):
         try:
-            service.accept_ownership_transfer(
+            org = service.accept_ownership_transfer(
                 token=data.token,
                 user_id=current_user["id"],
             )
-            return {"message": "Ownership accepted successfully"}
+            return {
+                "message": "Ownership accepted successfully",
+                "organization_slug": org.organization_slug,
+                "organization_name": org.organization_name,
+            }
         except LookupError as e:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
         except PermissionError as e:

@@ -7,21 +7,27 @@ import { ResetRequestPage } from './pages/ResetRequestPage'
 import { ResetConfirmPage } from './pages/ResetConfirmPage'
 import { DashboardPage } from './pages/DashboardPage'
 import { InvitePage } from './pages/InvitePage'
+import { TransferAcceptPage } from './pages/TransferAcceptPage'
 import { useLang } from './hooks/useLang'
 import { useAuth } from './hooks/useAuth'
 
-const INVITE_TOKEN_KEY = 'cc.invite.pending_token'
+const PENDING_FLOW_KEY = 'cc.pending_flow'    // sessionStorage: { kind, token }
 
 function readInitialRoute() {
   const params = new URLSearchParams(window.location.search)
   const path   = window.location.pathname
   const token  = params.get('token')
+
   if (token && path.includes('verify')) return { view: 'verify',        token }
   if (token && path.includes('reset'))  return { view: 'reset-confirm', token }
-  if (token && path.includes('invite')) {
-    // Strip the token off the URL so it doesn't linger if the user reloads later.
+
+  if (token && path.includes('transfer-ownership')) {
     try { window.history.replaceState({}, '', '/') } catch { /* noop */ }
-    return { view: 'invite', token }
+    return { view: 'token-flow', flow: { kind: 'transfer', token } }
+  }
+  if (token && path.includes('invite')) {
+    try { window.history.replaceState({}, '', '/') } catch { /* noop */ }
+    return { view: 'token-flow', flow: { kind: 'invite', token } }
   }
   return { view: 'login', token: null }
 }
@@ -31,52 +37,50 @@ const initialRoute = readInitialRoute()
 export function App() {
   const { lang, setLang, t, tf } = useLang()
   const { user, status, login, logout } = useAuth()
-  const [view, setView]                 = useState(initialRoute.view === 'invite' ? 'login' : initialRoute.view)
-  const [pendingInvite, setPendingInvite] = useState(
-    initialRoute.view === 'invite' ? initialRoute.token : null
+  const [view, setView]                 = useState(initialRoute.view === 'token-flow' ? 'login' : initialRoute.view)
+  const [pendingFlow, setPendingFlow]   = useState(
+    initialRoute.view === 'token-flow' ? initialRoute.flow : null
   )
 
-  // If the user authenticates with a stashed invite token (post-login from the
-  // unauthenticated invite landing), pull it back out and resume the flow.
+  // After login, restore any flow stashed during the unauthenticated landing.
   useEffect(() => {
-    if (status !== 'authenticated' || pendingInvite) return
-    const stashed = sessionStorage.getItem(INVITE_TOKEN_KEY)
-    if (stashed) {
-      sessionStorage.removeItem(INVITE_TOKEN_KEY)
-      setPendingInvite(stashed)
-    }
-  }, [status, pendingInvite])
+    if (status !== 'authenticated' || pendingFlow) return
+    try {
+      const raw = sessionStorage.getItem(PENDING_FLOW_KEY)
+      if (!raw) return
+      const parsed = JSON.parse(raw)
+      if (parsed && parsed.kind && parsed.token) {
+        sessionStorage.removeItem(PENDING_FLOW_KEY)
+        setPendingFlow(parsed)
+      }
+    } catch { /* ignore corrupt storage */ }
+  }, [status, pendingFlow])
 
-  // Blank screen while checking existing session
   if (status === 'loading') {
     return <div style={{ minHeight: '100vh', background: '#fff' }} />
   }
 
-  // ── Invite flow (full-screen, takes precedence over dashboard/login) ──
-  if (pendingInvite) {
-    return (
-      <InvitePage
-        token={pendingInvite}
-        user={user}
-        status={status}
-        onProceedToLogin={() => {
-          // Stash the token so we can resume after the user authenticates.
-          sessionStorage.setItem(INVITE_TOKEN_KEY, pendingInvite)
-          setPendingInvite(null)
-        }}
-        onComplete={() => setPendingInvite(null)}
-      />
-    )
+  // ── Token-driven flows (invite / transfer-ownership) ──
+  if (pendingFlow) {
+    const shared = {
+      token:  pendingFlow.token,
+      user,
+      status,
+      onProceedToLogin: () => {
+        sessionStorage.setItem(PENDING_FLOW_KEY, JSON.stringify(pendingFlow))
+        setPendingFlow(null)
+      },
+      onComplete: () => setPendingFlow(null),
+    }
+    if (pendingFlow.kind === 'invite')   return <InvitePage          {...shared} />
+    if (pendingFlow.kind === 'transfer') return <TransferAcceptPage  {...shared} />
   }
 
-  // Authenticated — always show dashboard, never let back to auth pages
   if (status === 'authenticated') {
     return <DashboardPage user={user} onLogout={logout} />
   }
 
-  // Unauthenticated — auth flow
   function navigate(v) { setView(v) }
-
   const sharedProps = { t, tf, lang, navigate }
 
   const PAGE = {

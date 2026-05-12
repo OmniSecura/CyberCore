@@ -492,7 +492,7 @@
 }
 .cc-mrow-main { flex: 1; min-width: 0; }
 .cc-mrow-title { font: 500 13.5px/1.3 var(--font-body); color: #0A1628; }
-.cc-mrow-sub   { font: 400 11.5px/1.3 var(--font-mono); color: #8899AA; margin-top: 2px; word-break: break-all; }
+.cc-mrow-sub   { font: 400 11.5px/1.3 var(--font-body); color: #8899AA; margin-top: 2px; word-break: break-word; }
 
 .cc-role-select {
   height: 28px; padding: 0 24px 0 10px;
@@ -579,6 +579,43 @@
 .cc-banner__body { flex: 1; min-width: 0; }
 .cc-banner__title { font: 600 13.5px/1.2 var(--font-body); color: #7B341E; }
 .cc-banner__sub   { font: 400 12.5px/1.5 var(--font-body); color: #9C4221; margin-top: 2px; }
+
+/* ─── Member picker (transfer modal) ─────────────────────────────────────── */
+.cc-member-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 2px;  /* room for focus ring */
+}
+.cc-pick-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 12px;
+  border: 1.5px solid #D6E4F0;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: border-color 120ms, background 120ms;
+  background: #fff;
+}
+.cc-pick-row:hover { border-color: #00C2CB; background: #F2FCFC; }
+.cc-pick-row--on   { border-color: #00C2CB; background: #F2FCFC; box-shadow: 0 0 0 3px rgba(0,194,203,.12); }
+.cc-pick-row--readonly { cursor: default; border-color: #E6EEF6; background: #F4F8FC; }
+.cc-pick-row--readonly:hover { border-color: #E6EEF6; background: #F4F8FC; }
+.cc-pick-row input[type="radio"] {
+  appearance: none;
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid #D6E4F0; flex-shrink: 0;
+  cursor: pointer; outline: none;
+  transition: border-color 120ms, background 120ms;
+  position: relative;
+}
+.cc-pick-row input[type="radio"]:checked {
+  border-color: #00C2CB;
+  background: radial-gradient(circle, #00C2CB 0%, #00C2CB 40%, #fff 50%, #fff 100%);
+}
 
 /* ─── Invite / transfer landing card ─────────────────────────────────────── */
 .cc-landing {

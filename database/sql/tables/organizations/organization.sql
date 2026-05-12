@@ -104,7 +104,8 @@ CREATE TABLE organization_ownership_transfers (
     accepted_at     DATETIME     NULL,  -- NULL = pending
 
     created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
+	updated_at               DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    
     PRIMARY KEY (id),
     UNIQUE KEY uq_ownership_transfer_token (token_hash),
 

@@ -239,6 +239,32 @@ class OrgService:
         if not org:
             raise LookupError("Organization not found")
 
+        prev_owner_id = org.owner_id
+
+        # The new owner was a member — drop the membership row (they become owner now).
+        self.db.query(OrganizationUser).filter(
+            OrganizationUser.organization_id == org.id,
+            OrganizationUser.user_id == transfer.to_owner_id,
+        ).delete(synchronize_session=False)
+
+        # The previous owner needs an explicit row now (was implicit before).
+        # Give them admin so they don't lose access on the spot.
+        already = (
+            self.db.query(OrganizationUser)
+            .filter(
+                OrganizationUser.organization_id == org.id,
+                OrganizationUser.user_id == prev_owner_id,
+            )
+            .first()
+        )
+        if not already:
+            self.db.add(OrganizationUser(
+                organization_id=org.id,
+                user_id=prev_owner_id,
+                role="admin",
+                invited_by=transfer.to_owner_id,
+            ))
+
         org.owner_id = transfer.to_owner_id
         transfer.accepted_at = datetime.now(timezone.utc)
         self.db.flush()

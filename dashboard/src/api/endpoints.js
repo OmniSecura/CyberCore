@@ -18,6 +18,11 @@ export const authApi = {
   deleteAccount:      (password) => api.delete("/users/me", { password }),
 };
 
+// ── User lookup (batch resolve UUIDs to {id, email, full_name}) ──────────
+export const userApi = {
+  lookup: (ids) => api.post("/users/lookup", { ids }),
+};
+
 // ── Organizations ─────────────────────────────────────────────────────────
 export const orgApi = {
   // List paginated — returns { items, total, page, page_size, total_pages }
