@@ -347,7 +347,11 @@ function OrgsView({ onOpenOrg }) {
               </tr>
             ) : (
               filtered.map(org => (
-                <tr key={org.id || org.organization_slug} onClick={() => onOpenOrg(org)}>
+                <tr
+                  key={org.id || org.organization_slug}
+                  className={org.is_active ? undefined : 'cc-row--inactive'}
+                  onClick={() => onOpenOrg(org)}
+                >
                   <td>
                     <div className="cc-org-cell">
                       <div className="cc-org-icon">{initials(org.organization_name)}</div>

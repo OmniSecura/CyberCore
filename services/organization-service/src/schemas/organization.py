@@ -64,6 +64,8 @@ class ReactivateOrganizationRequest(BaseModel):
     @field_validator("new_slug")
     @classmethod
     def validate_slug(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
         v = v.strip().lower()
         if not _SLUG_RE.match(v):
             raise ValueError(

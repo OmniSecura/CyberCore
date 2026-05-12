@@ -49,6 +49,58 @@ const IconOk = () => (
     <path d="M3 8.5l3 3 7-7"/>
   </svg>
 )
+const IconWarn = () => (
+  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M8 1.5l7 12H1z"/><path d="M8 6.5v3M8 12v.5"/>
+  </svg>
+)
+const IconPower = () => (
+  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M8 1.5v6"/><path d="M11.5 3.5a5 5 0 1 1-7 0"/>
+  </svg>
+)
+
+// ─── Inactive banner ──────────────────────────────────────────────────────────
+
+function InactiveBanner({ org, role, onReactivated }) {
+  const [busy, setBusy]   = useState(false)
+  const [error, setError] = useState(null)
+  const isOwner = role === 'owner'
+
+  async function reactivate() {
+    setBusy(true)
+    setError(null)
+    try {
+      await orgApi.reactivate(org.id)
+      onReactivated()
+    } catch (err) {
+      setError(err?.data?.detail || 'Failed to reactivate organization.')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <div className="cc-banner">
+        <div className="cc-banner__icon"><IconWarn /></div>
+        <div className="cc-banner__body">
+          <div className="cc-banner__title">This organization is inactive</div>
+          <div className="cc-banner__sub">
+            {isOwner
+              ? 'Members can no longer be invited and integrations are paused. You can reactivate it at any time.'
+              : 'The owner deactivated this workspace. Some actions are unavailable until it is reactivated.'}
+          </div>
+        </div>
+        {isOwner && (
+          <button className="cc-btn cc-btn-md cc-btn-primary" onClick={reactivate} disabled={busy}>
+            {busy ? <><span className="cc-spin" /> Reactivating…</> : <><IconPower /> Reactivate</>}
+          </button>
+        )}
+      </div>
+      {error && <Alert>{error}</Alert>}
+    </>
+  )
+}
 
 // ─── Alert ────────────────────────────────────────────────────────────────────
 
@@ -562,30 +614,32 @@ function SettingsTab({ org, currentRole, onUpdated, onDeleted }) {
         </form>
       </div>
 
-      <div className="cc-section cc-section--danger" style={{ marginTop: 16 }}>
-        <div className="cc-section-head">Danger zone</div>
-        <div className="cc-form-grid">
-          <p style={{ font: '400 13px/1.55 var(--font-body)', color: '#4A6080', margin: 0 }}>
-            Deleting this organization removes access for all members and hides its workspace.
-            This action can be reversed by reactivating the organization, but membership history may be lost.
-          </p>
+      {org.is_active && (
+        <div className="cc-section cc-section--danger" style={{ marginTop: 16 }}>
+          <div className="cc-section-head">Danger zone</div>
+          <div className="cc-form-grid">
+            <p style={{ font: '400 13px/1.55 var(--font-body)', color: '#4A6080', margin: 0 }}>
+              Deactivating this organization pauses access for all members and freezes its workspace.
+              You can reactivate it any time from the inactive list.
+            </p>
+          </div>
+          <div className="cc-form-actions">
+            <button
+              type="button"
+              className="cc-btn cc-btn-md cc-btn-danger"
+              onClick={() => setConfirmDel(true)}
+            >
+              Deactivate organization
+            </button>
+          </div>
         </div>
-        <div className="cc-form-actions">
-          <button
-            type="button"
-            className="cc-btn cc-btn-md cc-btn-danger"
-            onClick={() => setConfirmDel(true)}
-          >
-            Delete organization
-          </button>
-        </div>
-      </div>
+      )}
 
       {confirmDel && (
         <ConfirmModal
-          title={`Delete "${org.organization_name}"?`}
-          message="This will hide the organization for all members. Only the owner can reactivate it later."
-          confirmLabel="Delete organization"
+          title={`Deactivate "${org.organization_name}"?`}
+          message="The organization will be marked inactive. Members lose access until you reactivate it from the inactive list."
+          confirmLabel="Deactivate"
           danger
           loading={deleting}
           onConfirm={doDelete}
@@ -641,7 +695,7 @@ export function OrgDashboard({ org: initialOrg, onBack, onOrgChanged, currentUse
         Organizations
       </button>
 
-      <div className="cc-org-head">
+      <div className={`cc-org-head${org.is_active ? '' : ' cc-org-head--inactive'}`}>
         <div className="cc-org-head-icon">{initials(org.organization_name)}</div>
         <div className="cc-org-head-info">
           <div className="cc-org-head-name">{org.organization_name}</div>
@@ -656,6 +710,24 @@ export function OrgDashboard({ org: initialOrg, onBack, onOrgChanged, currentUse
           </div>
         </div>
       </div>
+
+      {!org.is_active && (
+        <InactiveBanner
+          org={org}
+          role={role}
+          onReactivated={() => {
+            orgApi.get(org.organization_slug).then(updated => {
+              setOrg(prev => ({ ...prev, ...updated }))
+              onOrgChanged?.({ ...org, ...updated })
+            }).catch(() => {
+              // fall back to optimistic update
+              const next = { ...org, is_active: true }
+              setOrg(next)
+              onOrgChanged?.(next)
+            })
+          }}
+        />
+      )}
 
       <div className="cc-tabs" role="tablist">
         {TABS.filter(t => t.id !== 'settings' || canManageOrg(role)).map(t => (

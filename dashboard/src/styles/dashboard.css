@@ -556,6 +556,91 @@
   padding: 32px 16px;
 }
 
+/* ─── Inactive banner (org detail) ───────────────────────────────────────── */
+.cc-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid #FED7AA;
+  background: #FFFAF0;
+  border-radius: 10px;
+  margin-bottom: 20px;
+}
+.cc-banner__icon {
+  width: 34px; height: 34px;
+  border-radius: 9px;
+  background: #FFEDD5;
+  color: #C05621;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.cc-banner__icon svg { width: 16px; height: 16px; }
+.cc-banner__body { flex: 1; min-width: 0; }
+.cc-banner__title { font: 600 13.5px/1.2 var(--font-body); color: #7B341E; }
+.cc-banner__sub   { font: 400 12.5px/1.5 var(--font-body); color: #9C4221; margin-top: 2px; }
+
+/* ─── Invite / transfer landing card ─────────────────────────────────────── */
+.cc-landing {
+  min-height: 100vh;
+  background: linear-gradient(180deg, #F4F8FC 0%, #ECF2F8 100%);
+  display: flex; align-items: center; justify-content: center;
+  padding: 32px 20px;
+}
+.cc-landing-card {
+  width: 100%; max-width: 420px;
+  background: #fff;
+  border: 1px solid #E6EEF6;
+  border-radius: 16px;
+  box-shadow: 0 12px 40px rgba(10,22,40,.08);
+  padding: 36px 32px;
+  text-align: center;
+  animation: cc-up 220ms cubic-bezier(.22, 1, .36, 1);
+}
+.cc-landing-icon {
+  width: 56px; height: 56px;
+  border-radius: 14px;
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 16px;
+}
+.cc-landing-icon svg { width: 28px; height: 28px; }
+.cc-landing-icon--brand { background: linear-gradient(135deg, #E0FAFA, #E8F0FE); color: #1A6EF5; }
+.cc-landing-icon--ok    { background: #F0FFF4; color: #276749; }
+.cc-landing-icon--err   { background: #FFF5F5; color: #C53030; }
+.cc-landing-spinner {
+  width: 56px; height: 56px; margin: 0 auto 16px;
+  display: flex; align-items: center; justify-content: center;
+}
+.cc-landing-title {
+  font: 700 22px/1.2 var(--font-display);
+  color: #0A1628; letter-spacing: -.3px;
+  margin-bottom: 10px;
+}
+.cc-landing-sub {
+  font: 400 14px/1.55 var(--font-body);
+  color: #4A6080;
+  margin-bottom: 22px;
+}
+.cc-landing-sub strong { color: #0A1628; font-weight: 600; }
+.cc-landing-foot {
+  font: 400 12px/1.5 var(--font-body);
+  color: #8899AA;
+  margin-top: 14px;
+}
+.cc-spin--lg {
+  width: 28px; height: 28px;
+  border-width: 3px;
+  border-color: #E0FAFA; border-top-color: #00C2CB;
+}
+
+/* Inactive row visual cue */
+.cc-table tbody tr.cc-row--inactive .cc-org-name { color: #8899AA; }
+.cc-table tbody tr.cc-row--inactive .cc-org-icon { opacity: .55; filter: grayscale(.4); }
+
+/* Row badges container in OrgDashboard header — small visual tweak when inactive */
+.cc-org-head--inactive .cc-org-head-icon { filter: grayscale(.55); opacity: .8; }
+.cc-org-head--inactive .cc-org-head-name { color: #4A6080; }
+
 /* ─── Empty state ────────────────────────────────────────────────────────── */
 .cc-empty { padding: 64px 24px; text-align: center; }
 .cc-empty-icon {
