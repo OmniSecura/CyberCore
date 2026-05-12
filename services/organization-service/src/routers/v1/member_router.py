@@ -61,6 +61,7 @@ class MemberRouter:
                 user_id=user_id,
                 actor_id=current_user["id"],
                 role=data.role,
+                custom_role_id=data.custom_role_id,
             )
             return {"message": "Member role updated successfully"}
         except LookupError as e:

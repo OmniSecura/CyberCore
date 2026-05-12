@@ -23,7 +23,13 @@ class OrganizationUser(TimestampMixin, Base):
         String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
 
+    # Built-in role: 'admin' | 'member' | 'viewer'
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="member")
+
+    # Optional custom role — takes precedence over `role` for privilege checks
+    custom_role_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True
+    )
 
     invited_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
 

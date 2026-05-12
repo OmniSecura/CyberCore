@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from ..database.models.Organization import Organization
 from ..database.models.OrganizationInvites import OrganizationInvite
+from ..database.models.OrganizationRole import OrganizationRole
 from ..database.models.OrganizationUsers import OrganizationUser
 from ..utils.email_client import OrgEmailClient
 
@@ -70,7 +71,12 @@ class MemberService:
         )
 
     def update_member_role(
-        self, slug: str, user_id: str, actor_id: str, role: str
+        self,
+        slug: str,
+        user_id: str,
+        actor_id: str,
+        role: str | None,
+        custom_role_id: str | None,
     ) -> OrganizationUser:
         org = _get_active_org(self.db, slug)
         _require_admin_or_owner(self.db, org, actor_id)
@@ -89,7 +95,25 @@ class MemberService:
         if not member:
             raise LookupError("Member not found")
 
-        member.role = role
+        if custom_role_id is not None:
+            # Verify the custom role belongs to this org
+            custom_role = (
+                self.db.query(OrganizationRole)
+                .filter(
+                    OrganizationRole.id == custom_role_id,
+                    OrganizationRole.organization_id == org.id,
+                )
+                .first()
+            )
+            if not custom_role:
+                raise LookupError("Custom role not found in this organization")
+            member.custom_role_id = custom_role_id
+            member.role = "member"  # base access level when using a custom role
+        else:
+            # Assigning a built-in role clears any custom role
+            member.role = role
+            member.custom_role_id = None
+
         self.db.flush()
         return member
 

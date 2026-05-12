@@ -2,7 +2,7 @@ import re
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 OrgRole = Literal["admin", "member", "viewer"]
 
@@ -12,6 +12,7 @@ _EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 class MemberResponse(BaseModel):
     user_id: str
     role: str
+    custom_role_id: Optional[str] = None
     invited_by: Optional[str]
     joined_at: datetime
 
@@ -19,7 +20,18 @@ class MemberResponse(BaseModel):
 
 
 class UpdateMemberRoleRequest(BaseModel):
-    role: OrgRole
+    # Provide exactly one of: built-in `role` OR `custom_role_id`.
+    # To clear a custom role and go back to a built-in role, provide `role` only.
+    role: Optional[OrgRole] = None
+    custom_role_id: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_exactly_one(self) -> "UpdateMemberRoleRequest":
+        if self.role is None and self.custom_role_id is None:
+            raise ValueError("Provide either 'role' or 'custom_role_id'")
+        if self.role is not None and self.custom_role_id is not None:
+            raise ValueError("Provide either 'role' or 'custom_role_id', not both")
+        return self
 
 
 class InviteRequest(BaseModel):
