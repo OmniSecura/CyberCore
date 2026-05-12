@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi_utils.cbv import cbv
 from sqlalchemy.orm import Session
 
@@ -12,6 +12,7 @@ from ...schemas.organization import (
     TransferOwnershipRequest,
     ReactivateOrganizationRequest,
     OrganizationResponse,
+    PaginatedOrganizationsResponse,
 )
 
 org_router = APIRouter(prefix="/organizations", tags=["Org"])
@@ -41,18 +42,34 @@ class OrganizationRouter:
 
     # ── List my orgs ──────────────────────────────────────────────────────────
 
-    @org_router.get("/my", status_code=status.HTTP_200_OK)
+    @org_router.get("/my", status_code=status.HTTP_200_OK, response_model=PaginatedOrganizationsResponse)
     async def get_my_orgs(
         self,
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
         current_user: dict = Depends(get_current_user),
         service: OrgService = Depends(_get_service),
     ):
-        orgs = service.list_user_orgs(current_user["id"])
-        return [OrganizationResponse.model_validate(o) for o in orgs]
+        orgs_with_roles, total = service.list_user_orgs_paginated(
+            user_id=current_user["id"], page=page, page_size=page_size,
+        )
+
+        items: list[OrganizationResponse] = []
+        for org, role in orgs_with_roles:
+            item = OrganizationResponse.model_validate(org)
+            item.role = role
+            item.member_count = service.count_org_members(org.id)
+            items.append(item)
+
+        total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+        return PaginatedOrganizationsResponse(
+            items=items, total=total, page=page,
+            page_size=page_size, total_pages=total_pages,
+        )
 
     # ── Get single org ────────────────────────────────────────────────────────
 
-    @org_router.get("/{slug}", status_code=status.HTTP_200_OK)
+    @org_router.get("/{slug}", status_code=status.HTTP_200_OK, response_model=OrganizationResponse)
     async def get_org(
         self,
         slug: str,
@@ -61,7 +78,10 @@ class OrganizationRouter:
     ):
         try:
             org = service.get_org_for_user(slug=slug, user_id=current_user["id"])
-            return OrganizationResponse.model_validate(org)
+            result = OrganizationResponse.model_validate(org)
+            result.role = service.get_user_role(org=org, user_id=current_user["id"])
+            result.member_count = service.count_org_members(org.id)
+            return result
         except LookupError as e:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
         except PermissionError as e:

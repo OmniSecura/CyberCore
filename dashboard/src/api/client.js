@@ -24,3 +24,9 @@ export async function api(method, path, body) {
 
   return data
 }
+
+api.get    = (path, body)  => api('GET',    path, body)
+api.post   = (path, body)  => api('POST',   path, body)
+api.patch  = (path, body)  => api('PATCH',  path, body)
+api.put    = (path, body)  => api('PUT',    path, body)
+api.delete = (path, body)  => api('DELETE', path, body)

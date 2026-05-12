@@ -68,6 +68,72 @@ class OrgService:
             .all()
         )
 
+    def list_user_orgs_paginated(
+        self, user_id: str, page: int = 1, page_size: int = 20
+    ) -> tuple[list[tuple[Organization, str]], int]:
+        """Returns ([(org, role)], total) — role is the actor's role on each org."""
+        page = max(1, page)
+        page_size = max(1, min(100, page_size))
+
+        member_org_ids = (
+            self.db.query(OrganizationUser.organization_id)
+            .filter(OrganizationUser.user_id == user_id)
+            .subquery()
+        )
+
+        base = (
+            self.db.query(Organization)
+            .filter(
+                Organization.deleted_at.is_(None),
+                Organization.is_active == True,
+                (Organization.owner_id == user_id) |
+                (Organization.id.in_(member_org_ids))
+            )
+            .order_by(Organization.id)
+        )
+
+        total = base.count()
+        orgs = base.offset((page - 1) * page_size).limit(page_size).all()
+
+        member_roles = {
+            ou.organization_id: ou.role
+            for ou in self.db.query(OrganizationUser)
+                              .filter(OrganizationUser.user_id == user_id)
+                              .all()
+        }
+
+        result: list[tuple[Organization, str]] = []
+        for org in orgs:
+            if org.owner_id == user_id:
+                role = "owner"
+            else:
+                role = member_roles.get(org.id, "viewer")
+            result.append((org, role))
+
+        return result, total
+
+    def get_user_role(self, org: Organization, user_id: str) -> str:
+        if org.owner_id == user_id:
+            return "owner"
+        member = (
+            self.db.query(OrganizationUser)
+            .filter(
+                OrganizationUser.organization_id == org.id,
+                OrganizationUser.user_id == user_id,
+            )
+            .first()
+        )
+        return member.role if member else "viewer"
+
+    def count_org_members(self, org_id: str) -> int:
+        """Member count = OrganizationUser rows + 1 (for the owner)."""
+        members = (
+            self.db.query(OrganizationUser)
+            .filter(OrganizationUser.organization_id == org_id)
+            .count()
+        )
+        return members + 1
+
     def get_org_for_user(self, slug: str, user_id: str) -> Organization:
         org = self.get_by_slug(slug)
         if not org:
