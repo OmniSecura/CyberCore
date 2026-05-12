@@ -15,6 +15,7 @@ async def get_current_user(request: Request) -> dict:
         response = await client.get(
             f"{AUTH_SERVICE_URL}/api/v1/users/me",
             cookies=cookies,
+            timeout=5.0,
         )
 
     if response.status_code == 401:

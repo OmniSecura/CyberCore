@@ -54,6 +54,10 @@ app = create_app()
 @app.on_event("startup")
 def on_startup() -> None:
     if os.getenv("DB_CREATE_TABLES", "false").lower() == "true":
-        from .database.models.User import User          # noqa: F401
-        from .database.models.UserToken import UserToken  # noqa: F401  ← dodaj to
+        from .database.models.User import User                          # noqa: F401
+        from .database.models.Organization import Organization          # noqa: F401
+        from .database.models.OrganizationUsers import OrganizationUser # noqa: F401
+        from .database.models.OrganizationRole import OrganizationRole # noqa: F401
+        from .database.models.OrganizationInvites import OrganizationInvite # noqa: F401
+        from .database.models.OrganizationOwnershipTransfer import OrganizationOwnershipTransfer # noqa: F401
         Base.metadata.create_all(bind=_connector.get_engine())

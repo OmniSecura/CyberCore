@@ -36,8 +36,7 @@ function MemberRow({ displayName, email, avatarSeed, roleSlot, actionSlot }) {
 
 const ROLE_LABEL = { owner: 'Owner', admin: 'Admin', member: 'Member', viewer: 'Viewer' }
 
-const canManageOrg     = (role) => role === 'owner'
-const canManageMembers = (role) => role === 'owner' || role === 'admin'
+const canManageOrg = (role) => role === 'owner'
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
