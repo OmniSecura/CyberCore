@@ -1,11 +1,16 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.openapi.docs import get_swagger_ui_html
 from starlette.middleware.cors import CORSMiddleware
 
 from .global_settings import APP_NAME, APP_DESCRIPTION, APP_VERSION, ALLOWED_ORIGINS
 from .routers.api_router import api_router
-from .database.db_connection import engine
-from sqlmodel import SQLModel
+from .database.db_connection import _connector
+from .database.models.Base import Base
+from .database.models.ScanJob import ScanJob          # noqa: F401 — must be imported so SQLAlchemy registers the relationship
+from .database.models.ScanFinding import ScanFinding  # noqa: F401
+
 
 def create_app() -> FastAPI:
     app = FastAPI(
@@ -15,8 +20,6 @@ def create_app() -> FastAPI:
         docs_url=None,
         redoc_url=None,
     )
-
-    SQLModel.metadata.create_all(engine)
 
     app.add_middleware(
         CORSMiddleware,
@@ -31,8 +34,15 @@ def create_app() -> FastAPI:
     async def custom_swagger_ui():
         return get_swagger_ui_html(
             openapi_url=app.openapi_url,
-            title=f"{APP_NAME} — Swagger UI"
+            title=f"{APP_NAME} — Swagger UI",
         )
+
+    @app.get("/health", tags=["System"])
+    def health():
+        return {
+            "status": "ok",
+            "database": "reachable" if _connector.ping() else "unreachable",
+        }
 
     app.include_router(api_router)
 
@@ -40,3 +50,9 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+
+@app.on_event("startup")
+def on_startup() -> None:
+    if os.getenv("DB_CREATE_TABLES", "false").lower() == "true":
+        Base.metadata.create_all(bind=_connector.get_engine())
