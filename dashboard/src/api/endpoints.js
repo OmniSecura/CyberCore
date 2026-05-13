@@ -67,6 +67,43 @@ export const roleApi = {
   remove:         (slug, roleId)              => api.delete(`/organizations/roles/${slug}/${roleId}`),
 }
 
+// ── Scans ─────────────────────────────────────────────────────────────────────
+export const scanApi = {
+  list: (slug, { offset = 0, limit = 20, status } = {}) => {
+    const qs = new URLSearchParams({ offset, limit })
+    if (status) qs.set('status', status)
+    return api.get(`/scans/organizations/${slug}/scans?${qs}`)
+  },
+  get:      (slug, jobId)  => api.get(`/scans/organizations/${slug}/scans/${jobId}`),
+  findings: (slug, jobId, { offset = 0, limit = 200, severity, tool } = {}) => {
+    const qs = new URLSearchParams({ offset, limit })
+    if (severity) qs.set('severity', severity)
+    if (tool)     qs.set('tool', tool)
+    return api.get(`/scans/organizations/${slug}/scans/${jobId}/findings?${qs}`)
+  },
+  submitGit: (slug, data)  => api.post(`/scans/organizations/${slug}/scans/git`, data),
+  submitUpload: async (slug, name, file) => {
+    const fd = new FormData()
+    fd.append('name', name)
+    fd.append('file', file)
+    const res = await fetch(`/api/v1/scans/organizations/${slug}/scans/upload`, {
+      method: 'POST',
+      credentials: 'include',
+      body: fd,
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      const err = new Error(data?.detail || 'Upload failed')
+      err.status = res.status
+      err.data   = data
+      throw err
+    }
+    return data
+  },
+  cancel:    (slug, jobId) => api.post(`/scans/organizations/${slug}/scans/${jobId}/cancel`),
+  remove:    (slug, jobId) => api.delete(`/scans/organizations/${slug}/scans/${jobId}`),
+}
+
 // ── Email ─────────────────────────────────────────────────────────────────
 export const emailApi = {
   verifyEmail:          (token)    => api.post("/email/verify", { token }),

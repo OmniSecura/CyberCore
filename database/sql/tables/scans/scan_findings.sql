@@ -38,7 +38,7 @@ CREATE TABLE scan_findings (
         CHECK (severity IN ('critical', 'high', 'medium', 'low', 'info')),
 
     CONSTRAINT chk_scan_findings_tool
-        CHECK (tool IN ('bandit', 'semgrep'))
+        CHECK (tool IN ('bandit', 'semgrep', 'gitleaks', 'trivy', 'hadolint', 'pip-audit', 'npm-audit', 'gosec'))
 );
 
 -- ── Indexes ───────────────────────────────────────────────────────────────────

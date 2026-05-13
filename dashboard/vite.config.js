@@ -7,6 +7,7 @@ import react from "@vitejs/plugin-react";
  * Add new microservices here as they come online.
  */
 const SERVICES = {
+  "/api/v1/scans":         "http://localhost:8082",  // scan-service (must be before /organizations)
   "/api/v1/organizations": "http://localhost:8081",  // organization-service
   "/api/v1/invites":       "http://localhost:8081",  // organization-service (invite accept)
   "/api/v1/users":         "http://localhost:8000",  // auth-service

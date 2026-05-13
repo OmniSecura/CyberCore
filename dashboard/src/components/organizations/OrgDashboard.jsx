@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { orgApi, memberApi, inviteApi, userApi, roleApi } from '../../api/endpoints'
 import { TransferOwnershipModal } from './TransferOwnershipModal'
+import { ScansTab } from '../scans/ScansTab'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -1107,6 +1108,7 @@ const TABS = [
   { id: 'overview', label: 'Overview',  visible: ()                       => true },
   { id: 'members',  label: 'Members',   visible: ()                       => true },
   { id: 'roles',    label: 'Roles',     visible: ({ has, loaded })        => loaded && (has('roles.view') || has('roles.manage')) },
+  { id: 'scans',    label: 'Scans',     visible: ({ has, loaded })        => loaded && (has('scans.view') || has('scans.run')) },
   { id: 'settings', label: 'Settings',  visible: ({ role })               => canManageOrg(role) },
 ]
 
@@ -1226,6 +1228,9 @@ export function OrgDashboard({ org: initialOrg, onBack, onOrgChanged, currentUse
       )}
       {tab === 'roles' && (has('roles.view') || has('roles.manage')) && (
         <RolesTab org={org} has={has} />
+      )}
+      {tab === 'scans' && (has('scans.view') || has('scans.run')) && (
+        <ScansTab org={org} has={has} />
       )}
       {tab === 'settings' && canManageOrg(role) && (
         <SettingsTab

@@ -28,7 +28,7 @@ cybercore/
 │   ├── alert-service/          # Alerting & notification engine
 │   └── organization-service/  # Creating/managing organizations and projects
 ├── workers/
-│   ├── scan-worker/           # Celery — runs bandit, semgrep, ZAP
+│   ├── scan-worker/           # Celery — Bandit, Semgrep, Gitleaks, Trivy, Hadolint, pip-audit, npm audit, gosec
 │   ├── log-consumer/          # Kafka consumer → TimescaleDB
 │   └── ml-worker/             # Anomaly detection engine
 ├── shared/
@@ -93,22 +93,23 @@ All scan types (SAST, DAST, agent scans) report their results through this servi
 Static Application Security Testing — finds vulnerabilities in your code before it runs.
 
 **Input methods:**
-- Upload a single file
-- Upload a zip archive (folder)
+- Upload a ZIP archive of your project
 - Provide a **public Git repository URL**
-- Provide a **private Git repository URL** (with token-based authentication — GitHub PAT, GitLab token)
 
-**Recommended scanning tools (all open-source):**
+**Scanning tools (all open-source):**
 
-| Tool | Language Coverage | Best For |
-|------|-------------------|----------|
-| [Semgrep](https://semgrep.dev) | Python, JS, Go, Java, Ruby, C/C++, and more | Custom rules, fast scanning, OWASP coverage |
-| [Bandit](https://bandit.readthedocs.io) | Python only | Deep Python security checks |
-| [Gosec](https://github.com/securego/gosec) | Go only | Go-specific vulnerability patterns |
-| [ESLint Security](https://github.com/eslint-community/eslint-plugin-security) | JavaScript/TypeScript | JS injection, prototype pollution |
-| [Gitleaks](https://gitleaks.io) | All | Secret/credential detection in code history |
+| Tool | Language / Domain | What It Catches |
+|------|-------------------|-----------------|
+| [Semgrep](https://semgrep.dev) | Python, JS/TS, Go, Java, PHP, Ruby, C, Rust + more | OWASP Top 10, secrets, framework-specific rules (Django, Flask, Express) |
+| [Bandit](https://bandit.readthedocs.io) | Python | Deep Python-specific security anti-patterns |
+| [Gitleaks](https://gitleaks.io) | All files | Secrets and credentials committed to code |
+| [Trivy](https://trivy.dev) | All ecosystems (pip, npm, go, gem, cargo…) + IaC | Dependency CVEs, Dockerfile & Terraform misconfigurations |
+| [Hadolint](https://github.com/hadolint/hadolint) | Dockerfile | Dockerfile best-practice and security lint |
+| [pip-audit](https://github.com/pypa/pip-audit) | Python (requirements.txt, pyproject.toml, Pipfile) | Known CVEs in Python dependencies |
+| [npm audit](https://docs.npmjs.com/cli/commands/npm-audit) | Node.js (package.json) | Known CVEs in Node.js dependencies |
+| [gosec](https://github.com/securego/gosec) | Go | Go-specific vulnerability patterns |
 
-Recommended default: **Semgrep** as the primary engine with Bandit as a secondary pass for Python projects. Gitleaks runs on every scan automatically to catch accidentally committed secrets.
+Every scan runs all applicable tools automatically — language detection is done upfront so only relevant tools execute. Results are deduplicated, severity-normalized, and grouped by tool in the dashboard.
 
 ---
 
@@ -312,7 +313,7 @@ helm install cybercore ./k8s/cybercore \
 
 ## Roadmap
 
-- [ ] SAST support for more languages (Rust, PHP, C#)
+- [ ] SAST support for C# (Roslyn analyzers)
 - [ ] DAST authenticated scan flows (log in as a user, then test)
 - [ ] Agent for Windows (currently Linux/macOS)
 - [ ] ML-based code vulnerability detection (beyond rule-based)
