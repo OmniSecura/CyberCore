@@ -255,16 +255,63 @@
   text-align: left;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.sc-finding-loc {
-  font: 400 11.5px/1 var(--font-mono); color: #8899AA;
+.sc-finding-file {
+  display: flex; align-items: baseline; gap: 1px;
+  max-width: 260px; flex-shrink: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+}
+.sc-finding-fdir {
+  font-size: 10.5px; color: #AABBC8;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  max-width: 200px; flex-shrink: 0;
+  flex-shrink: 1; min-width: 0;
+}
+.sc-finding-fname {
+  font-size: 12px; color: #4A6080; font-weight: 500;
+  white-space: nowrap; flex-shrink: 0;
+}
+.sc-finding-line {
+  font-size: 11px; color: #1457C8; font-weight: 600;
+  white-space: nowrap; flex-shrink: 0;
+  background: #EEF4FF; border-radius: 4px;
+  padding: 1px 4px; margin-left: 3px;
 }
 
 .sc-finding-body {
   padding: 0 14px 14px 14px;
   border-top: 1px solid #EFF4FA;
 }
+
+/* Full path strip */
+.sc-finding-path {
+  display: flex; align-items: center; gap: 7px;
+  margin: 10px 0 8px;
+  padding: 7px 10px;
+  background: #F4F8FC; border-radius: 7px;
+  border: 1px solid #E6EEF6;
+}
+.sc-finding-path svg {
+  width: 13px; height: 13px; color: #8899AA; flex-shrink: 0;
+}
+.sc-finding-path-text {
+  font: 400 11.5px/1.4 var(--font-mono); color: #2D3E50;
+  word-break: break-all; flex: 1;
+}
+.sc-finding-path-line {
+  font: 600 11px/1 var(--font-mono); color: #1457C8;
+  background: #EEF4FF; border-radius: 4px;
+  padding: 2px 6px; flex-shrink: 0; white-space: nowrap;
+}
+.sc-copy-btn {
+  border: none; background: none; cursor: pointer;
+  padding: 2px 4px; border-radius: 4px;
+  display: flex; align-items: center;
+  color: #8899AA; flex-shrink: 0;
+  transition: background 120ms, color 120ms;
+}
+.sc-copy-btn:hover { background: #E6EEF6; color: #4A6080; }
+.sc-copy-btn svg { width: 13px; height: 13px; }
+
 .sc-finding-msg {
   font: 400 13px/1.6 var(--font-body); color: #4A6080;
   margin: 10px 0 10px;

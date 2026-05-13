@@ -497,35 +497,73 @@ function ScanList({ slug, plan, has, onSelect }) {
 
 // ─── Finding row (expandable) ─────────────────────────────────────────────────
 
+function splitFilePath(filePath) {
+  if (!filePath) return { dir: '', filename: '' }
+  const normalized = filePath.replace(/\\/g, '/')
+  const idx = normalized.lastIndexOf('/')
+  if (idx === -1) return { dir: '', filename: normalized }
+  return { dir: normalized.slice(0, idx + 1), filename: normalized.slice(idx + 1) }
+}
+
 function FindingRow({ finding }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen]       = useState(false)
+  const [copied, setCopied]   = useState(false)
+  const { dir, filename }     = splitFilePath(finding.file_path)
+
+  function copyPath() {
+    navigator.clipboard.writeText(finding.file_path || '').then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
+  }
 
   return (
     <div className={`sc-finding${open ? ' sc-finding--open' : ''}`}>
       <button className="sc-finding-head" onClick={() => setOpen(o => !o)}>
         <SevBadge severity={finding.severity} />
         <span className="sc-finding-title">{finding.title || finding.rule_id}</span>
-        <span className="sc-finding-loc">
-          {finding.file_path}
-          {finding.line_start != null ? `:${finding.line_start}` : ''}
+        <span className="sc-finding-file">
+          {dir && <span className="sc-finding-fdir">{dir}</span>}
+          <span className="sc-finding-fname">{filename || finding.file_path}</span>
+          {finding.line_start != null && (
+            <span className="sc-finding-line">:{finding.line_start}</span>
+          )}
         </span>
         <IconChevron open={open} />
       </button>
 
       {open && (
         <div className="sc-finding-body">
+          {/* Full path row */}
+          <div className="sc-finding-path">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M2 3.5A1.5 1.5 0 013.5 2h2.379a1.5 1.5 0 011.06.44l.622.621A1.5 1.5 0 008.62 3.5H12.5A1.5 1.5 0 0114 5v7a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 12.5v-9z"/>
+            </svg>
+            <span className="sc-finding-path-text">{finding.file_path}</span>
+            {finding.line_start != null && (
+              <span className="sc-finding-path-line">
+                line {finding.line_start}
+                {finding.line_end != null && finding.line_end !== finding.line_start
+                  ? `–${finding.line_end}` : ''}
+              </span>
+            )}
+            <button className="sc-copy-btn" onClick={copyPath} title="Copy path">
+              {copied
+                ? <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 8l3 3 7-7"/></svg>
+                : <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="5" y="5" width="8" height="8" rx="1.5"/><path d="M3 11V3.5A1.5 1.5 0 014.5 2H11"/></svg>
+              }
+            </button>
+          </div>
+
           {finding.message && <p className="sc-finding-msg">{finding.message}</p>}
           {finding.code_snippet && (
             <pre className="sc-code"><code>{finding.code_snippet}</code></pre>
           )}
           <div className="sc-finding-meta">
-            {finding.rule_id  && <span className="sc-meta-tag"><b>Rule</b> {finding.rule_id}</span>}
-            {finding.cwe      && <span className="sc-meta-tag"><b>CWE</b> {finding.cwe}</span>}
-            {finding.owasp    && <span className="sc-meta-tag"><b>OWASP</b> {finding.owasp}</span>}
+            {finding.rule_id    && <span className="sc-meta-tag"><b>Rule</b> {finding.rule_id}</span>}
+            {finding.cwe        && <span className="sc-meta-tag"><b>CWE</b> {finding.cwe}</span>}
+            {finding.owasp      && <span className="sc-meta-tag"><b>OWASP</b> {finding.owasp}</span>}
             {finding.confidence && <span className="sc-meta-tag"><b>Confidence</b> {finding.confidence}</span>}
-            {finding.line_end != null && finding.line_end !== finding.line_start && (
-              <span className="sc-meta-tag"><b>Lines</b> {finding.line_start}–{finding.line_end}</span>
-            )}
           </div>
         </div>
       )}
