@@ -18,6 +18,8 @@ import os
 import httpx
 from fastapi import Depends, HTTPException, Request, status
 
+from .http_client import get_org_service_client
+
 ORG_SERVICE_URL = os.getenv("ORG_SERVICE_URL", "http://localhost:8081")
 
 
@@ -30,13 +32,13 @@ def require_org_privilege(privilege: str):
     The slug MUST be a path parameter named `slug` in the same route.
     """
     async def _check(slug: str, request: Request) -> None:
+        client = get_org_service_client()
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    f"{ORG_SERVICE_URL}/api/v1/organizations/roles/{slug}/my-privileges",
-                    cookies=request.cookies,
-                    timeout=5.0,
-                )
+            resp = await client.get(
+                f"{ORG_SERVICE_URL}/api/v1/organizations/roles/{slug}/my-privileges",
+                cookies=request.cookies,
+                timeout=5.0,
+            )
         except httpx.RequestError:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,

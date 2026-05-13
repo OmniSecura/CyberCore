@@ -55,8 +55,13 @@ CREATE TABLE scan_jobs (
 
 -- ── Indexes ───────────────────────────────────────────────────────────────────
 
-CREATE INDEX idx_scan_jobs_org_id       ON scan_jobs(organization_id);
-CREATE INDEX idx_scan_jobs_created_by   ON scan_jobs(created_by);
-CREATE INDEX idx_scan_jobs_status       ON scan_jobs(status);
-CREATE INDEX idx_scan_jobs_deleted_at   ON scan_jobs(deleted_at);
-CREATE INDEX idx_scan_jobs_created_at   ON scan_jobs(created_at);
+-- The org listing query filters on (organization_id, deleted_at) and orders by
+-- created_at DESC. A composite index serves both the WHERE and the ORDER BY in
+-- a single scan; the standalone organization_id index is left in place because
+-- some lookups (e.g. counts) only filter by org.
+CREATE INDEX idx_scan_jobs_org_id            ON scan_jobs(organization_id);
+CREATE INDEX ix_scan_jobs_org_active_created ON scan_jobs(organization_id, deleted_at, created_at);
+CREATE INDEX idx_scan_jobs_created_by        ON scan_jobs(created_by);
+CREATE INDEX idx_scan_jobs_status            ON scan_jobs(status);
+CREATE INDEX idx_scan_jobs_deleted_at        ON scan_jobs(deleted_at);
+CREATE INDEX idx_scan_jobs_created_at        ON scan_jobs(created_at);

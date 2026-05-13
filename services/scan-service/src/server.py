@@ -10,6 +10,7 @@ from .database.db_connection import _connector
 from .database.models.Base import Base
 from .database.models.ScanJob import ScanJob          # noqa: F401 — must be imported so SQLAlchemy registers the relationship
 from .database.models.ScanFinding import ScanFinding  # noqa: F401
+from .security.http_client import close_clients
 
 
 def create_app() -> FastAPI:
@@ -56,3 +57,8 @@ app = create_app()
 def on_startup() -> None:
     if os.getenv("DB_CREATE_TABLES", "false").lower() == "true":
         Base.metadata.create_all(bind=_connector.get_engine())
+
+
+@app.on_event("shutdown")
+async def on_shutdown() -> None:
+    await close_clients()

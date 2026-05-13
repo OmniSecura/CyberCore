@@ -31,8 +31,11 @@ def run(source_dir: Path) -> dict:
         cwd=str(source_dir),
     )
 
-    # Exit 0 = clean, 1 = issues, 2 = build errors (non-fatal)
-    if result.returncode > 2:
+    # gosec exit codes: 0 = clean, 1 = issues found, 2 = Go build errors,
+    # >2 = gosec internal failure. Treat 2 as a real error so the user sees
+    # "couldn't compile your Go code" instead of a green "no findings" report
+    # that just means gosec never ran.
+    if result.returncode >= 2:
         raise RuntimeError(
             f"gosec error (exit {result.returncode}): {result.stderr.strip()[:256]}"
         )

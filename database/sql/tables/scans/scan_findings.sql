@@ -38,7 +38,13 @@ CREATE TABLE scan_findings (
         CHECK (severity IN ('critical', 'high', 'medium', 'low', 'info')),
 
     CONSTRAINT chk_scan_findings_tool
-        CHECK (tool IN ('bandit', 'semgrep', 'gitleaks', 'trivy', 'hadolint', 'pip-audit', 'npm-audit', 'gosec'))
+        CHECK (tool IN ('bandit', 'semgrep', 'gitleaks', 'trivy', 'hadolint', 'pip-audit', 'npm-audit', 'gosec')),
+
+    -- Per-job dedup is enforced at the DB level. Two concurrent worker tasks
+    -- (or a Celery retry) cannot insert duplicate findings for the same scan
+    -- even if the in-memory dedup is bypassed.
+    CONSTRAINT uq_findings_job_fp
+        UNIQUE (scan_job_id, fingerprint)
 );
 
 -- ── Indexes ───────────────────────────────────────────────────────────────────

@@ -15,6 +15,7 @@ from ...schemas.scan import (
     ScanJobListOut,
     FindingsListOut,
 )
+from ...security.http_client import get_org_service_client
 from ...security.org_privilege import require_org_privilege
 from ...security.current_user import get_current_user_id
 from ...services.scan_service import ScanService
@@ -26,21 +27,19 @@ ORG_SERVICE_URL = os.getenv("ORG_SERVICE_URL", "http://localhost:8081")
 
 async def _resolve_org_id(slug: str, request: Request) -> str:
     """Resolve org slug → UUID via organization service (forwards auth cookies)."""
+    client = get_org_service_client()
     try:
-        async with httpx.AsyncClient() as client:
-            r = await client.get(
-                f"{ORG_SERVICE_URL}/api/v1/organizations/{slug}",
-                cookies=request.cookies,
-                timeout=5.0,
-            )
-        if r.is_success:
-            return r.json()["id"]
-        if r.status_code == 404:
-            raise HTTPException(status_code=404, detail="Organization not found")
-    except HTTPException:
-        raise
-    except Exception:
-        pass
+        r = await client.get(
+            f"{ORG_SERVICE_URL}/api/v1/organizations/{slug}",
+            cookies=request.cookies,
+            timeout=5.0,
+        )
+    except httpx.RequestError:
+        raise HTTPException(status_code=502, detail="Organization service unavailable")
+    if r.is_success:
+        return r.json()["id"]
+    if r.status_code == 404:
+        raise HTTPException(status_code=404, detail="Organization not found")
     raise HTTPException(status_code=502, detail="Organization service unavailable")
 
 
@@ -147,7 +146,12 @@ async def list_findings(
     total, items, severity_counts = svc.list_findings(
         org_id, job_id, offset, limit, severity, tool
     )
-    return FindingsListOut(total=total, items=items, severity_counts=severity_counts)
+    return FindingsListOut(
+        total=total,
+        items=items,
+        severity_counts=severity_counts,
+        truncated=len(items) < total,
+    )
 
 
 # ── Cancel scan ────────────────────────────────────────────────────────────────

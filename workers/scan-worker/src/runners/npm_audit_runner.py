@@ -25,12 +25,23 @@ def run(source_dir: Path) -> dict:
     if not lock.exists():
         # Generate lock file without downloading node_modules
         log.info("npm-audit: generating package-lock.json (--package-lock-only)")
-        subprocess.run(
+        install = subprocess.run(
             ["npm", "install", "--package-lock-only", "--ignore-scripts", "--no-fund"],
             cwd=str(source_dir),
             capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=120,
         )
+        if install.returncode != 0 or not lock.exists():
+            # Without a lockfile, `npm audit` will report 0 findings but the
+            # result is meaningless. Fail loudly so the job records an error
+            # for this tool instead of silently passing.
+            stderr = (install.stderr or "").strip()[:512]
+            raise RuntimeError(
+                f"npm install --package-lock-only failed (exit {install.returncode}): {stderr}"
+            )
 
     result = subprocess.run(
         ["npm", "audit", "--json"],

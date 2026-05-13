@@ -108,6 +108,11 @@ def parse(report: dict, source_dir: Path) -> list[dict[str, Any]]:
             f"{rule_id}:{file_path}:{item.get('line_number', 0)}:{message}".encode()
         ).hexdigest()[:64]
 
+        # Bandit reports a `line_range` list, but newer versions can return [],
+        # which used to raise IndexError on `[-1]`. Fall back to line_number.
+        line_range = item.get("line_range") or []
+        line_end = line_range[-1] if line_range else item.get("line_number")
+
         findings.append({
             "id": str(uuid.uuid4()),
             "tool": "bandit",
@@ -118,7 +123,7 @@ def parse(report: dict, source_dir: Path) -> list[dict[str, Any]]:
             "message": message,
             "file_path": file_path,
             "line_start": item.get("line_number"),
-            "line_end": item.get("line_range", [None])[-1],
+            "line_end": line_end,
             "code_snippet": snippet,
             "cwe": _CWE_MAP.get(rule_id),
             "owasp": None,

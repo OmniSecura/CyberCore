@@ -90,7 +90,10 @@ def run_sast_scan(self, job_id: str) -> dict:
     workspace = Path(SCAN_WORKSPACE_DIR) / job_id
 
     try:
-        # ── Load job ──────────────────────────────────────────────────────────
+        # ── Load job + flip to running atomically ─────────────────────────────
+        # Doing this in two separate sessions previously meant the row could be
+        # left in `running` forever if the second read failed. One session, one
+        # commit, snapshot every value we'll need outside the transaction.
         with db_session() as db:
             job: ScanJob | None = db.query(ScanJob).filter(ScanJob.id == job_id).first()
             if not job:
@@ -100,19 +103,19 @@ def run_sast_scan(self, job_id: str) -> dict:
             if job.status == "cancelled":
                 log.info("ScanJob %s was cancelled before worker picked it up", job_id)
                 return {"status": "cancelled"}
+            if job.deleted_at is not None:
+                log.info("ScanJob %s was soft-deleted before worker picked it up", job_id)
+                return {"status": "deleted"}
 
             job.status     = "running"
             job.started_at = datetime.now(tz=timezone.utc)
-            db.flush()
 
-        # ── Prepare source ────────────────────────────────────────────────────
-        source_dir = workspace / "source"
-
-        with db_session() as db:
-            job         = db.query(ScanJob).filter(ScanJob.id == job_id).first()
             target_type = job.target_type
             target_url  = job.target_url
             target_path = job.target_path
+
+        # ── Prepare source ────────────────────────────────────────────────────
+        source_dir = workspace / "source"
 
         if target_type == "git_url":
             clone_repo(target_url, source_dir)
@@ -202,9 +205,11 @@ def run_sast_scan(self, job_id: str) -> dict:
         )
 
         # ── Persist ───────────────────────────────────────────────────────────
+        # bulk_save_objects is meaningfully faster than add() in a loop for the
+        # large-finding case (semgrep on a big repo can produce thousands).
         with db_session() as db:
-            for f in unique_findings:
-                db.add(ScanFinding(
+            findings_to_persist = [
+                ScanFinding(
                     id=f["id"],
                     scan_job_id=job_id,
                     tool=f["tool"],
@@ -220,7 +225,10 @@ def run_sast_scan(self, job_id: str) -> dict:
                     cwe=f.get("cwe"),
                     owasp=f.get("owasp"),
                     fingerprint=f["fingerprint"],
-                ))
+                )
+                for f in unique_findings
+            ]
+            db.bulk_save_objects(findings_to_persist)
 
             job = db.query(ScanJob).filter(ScanJob.id == job_id).first()
             job.status         = "completed"

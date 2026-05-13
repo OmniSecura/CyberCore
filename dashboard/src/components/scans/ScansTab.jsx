@@ -576,6 +576,7 @@ function FindingRow({ finding }) {
 function FindingsContent({ slug, jobId, scan }) {
   const [findings, setFindings]         = useState([])
   const [total, setTotal]               = useState(0)
+  const [truncated, setTruncated]       = useState(false)
   const [severityCounts, setSevCounts]  = useState({})
   const [loading, setLoading]           = useState(true)
   const [err, setErr]                   = useState(null)
@@ -583,15 +584,27 @@ function FindingsContent({ slug, jobId, scan }) {
   const [sevFilter, setSevFilter]       = useState(null)
 
   const isTerminal = scan.status === 'completed' || scan.status === 'failed'
+  const PAGE_LIMIT = 200
 
   useEffect(() => {
     if (!isTerminal) { setLoading(false); return }
     setLoading(true)
     scanApi
-      .findings(slug, jobId, { limit: 200, tool: toolFilter || undefined, severity: sevFilter || undefined })
+      .findings(slug, jobId, {
+        limit: PAGE_LIMIT,
+        tool: toolFilter || undefined,
+        severity: sevFilter || undefined,
+      })
       .then(data => {
         setFindings(data.items)
         setTotal(data.total)
+        // Backend now returns `truncated`; fall back to comparing lengths for
+        // forward-compat with older deploys.
+        setTruncated(
+          typeof data.truncated === 'boolean'
+            ? data.truncated
+            : (data.items?.length ?? 0) < (data.total ?? 0)
+        )
         setSevCounts(data.severity_counts || {})
         setLoading(false)
       })
@@ -658,8 +671,10 @@ function FindingsContent({ slug, jobId, scan }) {
         )}
       </div>
 
-      {/* Tool filter tabs */}
-      {tools.length > 1 && !sevFilter && (
+      {/* Tool filter tabs — always visible when more than one tool present.
+          The two filters are independent: severity narrows by severity AND
+          tool narrows by tool, both applied server-side. */}
+      {tools.length > 1 && (
         <div className="sc-tool-tabs">
           <button className={`sc-tool-tab${!toolFilter ? ' sc-tool-tab--on' : ''}`} onClick={() => setToolFilter(null)}>
             All <span className="sc-tool-count">{total}</span>
@@ -673,6 +688,16 @@ function FindingsContent({ slug, jobId, scan }) {
               {tool} <span className="sc-tool-count">{byTool[tool].length}</span>
             </button>
           ))}
+        </div>
+      )}
+
+      {truncated && (
+        <div className="cc-alert sc-alert--warn">
+          <IconWarn />
+          <span>
+            Showing {findings.length.toLocaleString()} of {total.toLocaleString()} findings — the rest were truncated.
+            Per-tool counts below reflect only the loaded results.
+          </span>
         </div>
       )}
 

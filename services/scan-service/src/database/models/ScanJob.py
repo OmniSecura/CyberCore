@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, DateTime, Integer, Text, JSON
+from sqlalchemy import String, DateTime, Integer, Text, JSON, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .Base import Base, AuditMixin
@@ -9,6 +9,17 @@ from .Base import Base, AuditMixin
 
 class ScanJob(AuditMixin, Base):
     __tablename__ = "scan_jobs"
+    __table_args__ = (
+        # The org-scoped listing query filters on organization_id + deleted_at
+        # and orders by created_at DESC. A composite index lets MySQL/Postgres
+        # serve both the WHERE and the ORDER BY from one index lookup.
+        Index(
+            "ix_scan_jobs_org_active_created",
+            "organization_id",
+            "deleted_at",
+            "created_at",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid.uuid4())

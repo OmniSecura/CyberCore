@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import String, Integer, Text, ForeignKey
+from sqlalchemy import String, Integer, Text, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .Base import Base, TimestampMixin
@@ -10,6 +10,12 @@ _MEDIUM = 16_777_215   # MEDIUMTEXT threshold for MySQL
 
 class ScanFinding(TimestampMixin, Base):
     __tablename__ = "scan_findings"
+    __table_args__ = (
+        # Per-job dedup is enforced at the DB level too. Two concurrent worker
+        # tasks (or a retry) cannot insert duplicate findings for the same
+        # scan even if the in-memory dedup is bypassed.
+        UniqueConstraint("scan_job_id", "fingerprint", name="uq_findings_job_fp"),
+    )
 
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid.uuid4())
