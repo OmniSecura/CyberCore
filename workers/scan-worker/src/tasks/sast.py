@@ -17,6 +17,8 @@ from ..runners import (
     pip_audit_runner,
     npm_audit_runner,
     gosec_runner,
+    trivy_runner,
+    hadolint_runner,
 )
 from ..parsers import (
     bandit_parser,
@@ -25,6 +27,8 @@ from ..parsers import (
     pip_audit_parser,
     npm_audit_parser,
     gosec_parser,
+    trivy_parser,
+    hadolint_parser,
 )
 from ..utils.git_utils import clone_repo, extract_zip, cleanup
 
@@ -72,14 +76,16 @@ def run_sast_scan(self, job_id: str) -> dict:
     Main SAST task. Runs all applicable security tools against the target code:
 
       Always:
-        • Bandit     — Python static analysis
-        • Semgrep    — Multi-language OWASP + language-specific rules (auto-detected)
-        • Gitleaks   — Secret / credential detection
+        • Bandit      — Python static analysis
+        • Semgrep     — Multi-language OWASP + language-specific rules (auto-detected)
+        • Gitleaks    — Secret / credential detection
+        • Trivy       — Dependency CVEs + IaC misconfigurations
+        • Hadolint    — Dockerfile best-practice lint
 
       Conditional (based on project type detection):
-        • pip-audit  — Python dependency CVEs   (if requirements*.txt / pyproject.toml)
-        • npm audit  — Node.js dependency CVEs  (if package.json)
-        • gosec      — Go security analysis     (if *.go files)
+        • pip-audit   — Python dependency CVEs   (if requirements*.txt / pyproject.toml)
+        • npm audit   — Node.js dependency CVEs  (if package.json)
+        • gosec       — Go security analysis     (if *.go files)
     """
     workspace = Path(SCAN_WORKSPACE_DIR) / job_id
 
@@ -159,6 +165,12 @@ def run_sast_scan(self, job_id: str) -> dict:
             log.warning("gitleaks failed: %s", exc)
             errors.append(f"gitleaks: {exc}")
 
+        # Trivy — dependency CVEs + IaC misconfigs (covers all ecosystems)
+        collect("trivy",    trivy_runner.run,    trivy_parser.parse,    source_dir)
+
+        # Hadolint — Dockerfile lint
+        collect("hadolint", hadolint_runner.run, hadolint_parser.parse, source_dir)
+
         # pip-audit — Python dependency CVEs
         if has_py_deps:
             collect("pip-audit", pip_audit_runner.run, pip_audit_parser.parse, source_dir)
@@ -184,9 +196,9 @@ def run_sast_scan(self, job_id: str) -> dict:
             "Dedup: %d raw → %d unique findings (tools: bandit, semgrep, gitleaks%s%s%s)",
             len(all_findings),
             len(unique_findings),
-            ", pip-audit" if has_py_deps  else "",
-            ", npm-audit" if has_pkg_json else "",
-            ", gosec"     if has_go       else "",
+            ", pip-audit"  if has_py_deps  else "",
+            ", npm-audit"  if has_pkg_json else "",
+            ", gosec"      if has_go       else "",
         )
 
         # ── Persist ───────────────────────────────────────────────────────────

@@ -21,9 +21,24 @@ RUN curl -sSfL \
     | tar -xz -C /usr/local/bin gosec \
     && chmod +x /usr/local/bin/gosec
 
+# ── Trivy (vuln scanner + IaC misconfig) ─────────────────────────────────────
+ARG TRIVY_VERSION=0.52.2
+RUN curl -sSfL \
+      "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+    | tar -xz -C /usr/local/bin trivy \
+    && chmod +x /usr/local/bin/trivy
+
+# ── Hadolint (Dockerfile linter) ─────────────────────────────────────────────
+ARG HADOLINT_VERSION=2.12.0
+RUN curl -sSfL \
+      "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-x86_64" \
+      -o /usr/local/bin/hadolint \
+    && chmod +x /usr/local/bin/hadolint
+
+
 WORKDIR /app
 
-# ── Python deps (includes pip-audit, bandit, semgrep) ────────────────────────
+# ── Python deps (includes pip-audit, bandit, semgrep, checkov) ───────────────
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
