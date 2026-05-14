@@ -1,0 +1,230 @@
+version: "3.9"
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CyberCore — Docker Compose
+#
+#  Quick start:
+#    cp .env.example .env          # fill in secrets
+#    docker compose up --build -d
+#    docker compose logs -f        # tail all logs
+#
+#  Services and ports exposed on the host:
+#    dashboard   → http://localhost:80       (nginx — SPA + API proxy)
+#    auth        → http://localhost:8000     (FastAPI)
+#    org         → http://localhost:8081     (FastAPI)
+#    scan        → http://localhost:8082     (FastAPI)
+#    db          → localhost:3306            (MySQL 8.0)
+#    redis       → localhost:6379            (Redis 7)
+#
+#  Internal Docker network: cybercore_net
+#    Services reach each other by name, e.g. http://auth:8000
+# ══════════════════════════════════════════════════════════════════════════════
+
+networks:
+  cybercore_net:
+    driver: bridge
+
+volumes:
+  mysql_data:
+  redis_data:
+  scan_workspace:   # shared between scan-service and scan-worker
+  scan_uploads:     # uploaded zip files
+
+# ── Reusable DB env fragment ──────────────────────────────────────────────────
+x-db-env: &db-env
+  DB_CONNECTOR: mysql
+  MYSQL_HOST: db
+  MYSQL_PORT: "3306"
+  AUTH_USERNAME: ${AUTH_USERNAME:-root}
+  AUTH_PASSWORD: ${AUTH_PASSWORD:-changeme_app}
+
+services:
+
+  # ════════════════════════════════════════════════════════════════════════════
+  #  Infrastructure
+  # ════════════════════════════════════════════════════════════════════════════
+
+  db:
+    image: mysql:8.0
+    restart: unless-stopped
+    networks: [cybercore_net]
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-changeme_root}
+      # MYSQL_DATABASE is intentionally omitted — our init script creates
+      # separate databases (auth_db, org_db, scan_db) for service isolation.
+    volumes:
+      - mysql_data:/var/lib/mysql
+      # Init scripts run only on first start (empty data volume).
+      - ./database/docker-init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "3307:3306"   # 3306 zajęty przez lokalny MySQL — Docker DB dostępny na 3307
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost",
+             "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-changeme_root}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks: [cybercore_net]
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6380:6379"   # expose for local inspection (redis-cli, RedisInsight)
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ════════════════════════════════════════════════════════════════════════════
+  #  Backend microservices
+  # ════════════════════════════════════════════════════════════════════════════
+
+  auth:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks: [cybercore_net]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *db-env
+      MYSQL_DB: auth_db
+      # Redis DB 1 — separate from Celery to avoid key collisions
+      REDIS_URL: redis://redis:6379/1
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set in .env}
+      # Email (SMTP)
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-CyberCore}
+      # CORS — dashboard container is named 'dashboard' and served on port 80
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:80,http://localhost:3000}
+      DB_CREATE_TABLES: "true"
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  org:
+    build:
+      context: ./services/organization-service
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks: [cybercore_net]
+    depends_on:
+      db:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+    environment:
+      <<: *db-env
+      MYSQL_DB: org_db
+      AUTH_SERVICE_URL: http://auth:8000
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:80,http://localhost:3000}
+      DB_CREATE_TABLES: "true"
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-CyberCore}
+      APP_URL: ${APP_URL:-http://localhost}
+    ports:
+      - "8081:8081"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  scan:
+    build:
+      context: ./services/scan-service
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks: [cybercore_net]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+    environment:
+      <<: *db-env
+      MYSQL_DB: scan_db
+      AUTH_SERVICE_URL: http://auth:8000
+      ORG_SERVICE_URL: http://org:8081
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:80,http://localhost:3000}
+      DB_CREATE_TABLES: "true"
+    volumes:
+      - scan_uploads:/tmp/cybercore/uploads
+    ports:
+      - "8082:8082"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8082/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  worker:
+    build:
+      context: ./workers/scan-worker
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks: [cybercore_net]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *db-env
+      MYSQL_DB: scan_db
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      SCAN_WORKSPACE_DIR: /tmp/cybercore/scans
+      SCAN_UPLOAD_DIR: /tmp/cybercore/uploads
+    volumes:
+      - scan_workspace:/tmp/cybercore/scans
+      - scan_uploads:/tmp/cybercore/uploads
+    # No ports — Celery workers don't expose HTTP
+
+  # ════════════════════════════════════════════════════════════════════════════
+  #  Frontend
+  # ════════════════════════════════════════════════════════════════════════════
+
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks: [cybercore_net]
+    depends_on:
+      auth:
+        condition: service_healthy
+      org:
+        condition: service_healthy
+      scan:
+        condition: service_healthy
+    ports:
+      - "80:80"
