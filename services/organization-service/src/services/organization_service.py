@@ -322,6 +322,17 @@ class OrgService:
         if org.is_active:
             raise ValueError("Organization is already active")
 
+        # Reactivation revives an org into the active set — re-check the free-plan
+        # cap so users can't exceed it by deleting, creating, then reactivating.
+        if (
+            org.plan == "free"
+            and self.count_owned_free_orgs(actor_id) >= MAX_FREE_ORGS_PER_OWNER
+        ):
+            raise ValueError(
+                f"You already own the maximum of {MAX_FREE_ORGS_PER_OWNER} "
+                f"free-plan organizations"
+            )
+
         # Optional rename on reactivation — uniqueness is checked against other orgs.
         if new_slug and new_slug != org.organization_slug:
             existing = self.get_by_slug(new_slug)
