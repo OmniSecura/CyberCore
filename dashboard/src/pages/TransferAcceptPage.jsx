@@ -29,6 +29,7 @@ export function TransferAcceptPage({ token, user, status, onProceedToLogin, onCo
       .catch(err => {
         const detail = err?.data?.detail
         if (err?.status === 404)      setError(detail || 'This transfer is invalid or has already been used.')
+        else if (err?.status === 409) setError(detail || 'You cannot accept this transfer right now.')
         else if (err?.status === 410) setError(detail || 'This transfer request has expired.')
         else if (err?.status === 403) setError(detail || 'This transfer was sent to a different account.')
         else                          setError(detail || 'Failed to accept the ownership transfer.')

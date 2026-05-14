@@ -3,6 +3,7 @@ from fastapi_utils.cbv import cbv
 from sqlalchemy.orm import Session
 
 from ...database.db_connection import get_db
+from ...global_settings import MAX_FREE_ORGS_PER_OWNER
 from ...security.auth_client import get_current_user
 from ...services.organization_service import OrgService
 from ...schemas.organization import (
@@ -11,6 +12,7 @@ from ...schemas.organization import (
     UpdateOrganizationRequest,
     TransferOwnershipRequest,
     ReactivateOrganizationRequest,
+    FreeCapStatusResponse,
     OrganizationResponse,
     PaginatedOrganizationsResponse,
 )
@@ -65,6 +67,24 @@ class OrganizationRouter:
         return PaginatedOrganizationsResponse(
             items=items, total=total, page=page,
             page_size=page_size, total_pages=total_pages,
+        )
+
+    # ── Free-plan ownership cap status ────────────────────────────────────────
+    # Lets the UI surface usage and disable create/reactivate buttons before the
+    # user submits a request that would be rejected with 409.
+    # NOTE: registered before `/{slug}` so it isn't captured by that catch-all.
+
+    @org_router.get("/free-cap-status", status_code=status.HTTP_200_OK, response_model=FreeCapStatusResponse)
+    async def get_free_cap_status(
+        self,
+        current_user: dict = Depends(get_current_user),
+        service: OrgService = Depends(_get_service),
+    ):
+        owned = service.count_owned_free_orgs(current_user["id"])
+        return FreeCapStatusResponse(
+            owned=owned,
+            max=MAX_FREE_ORGS_PER_OWNER,
+            can_create=owned < MAX_FREE_ORGS_PER_OWNER,
         )
 
     # ── Get single org ────────────────────────────────────────────────────────

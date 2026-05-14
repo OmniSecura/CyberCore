@@ -34,6 +34,9 @@ export const orgApi = {
   remove:     (slug)         => api.delete(`/organizations/${slug}`),
   reactivate: (orgId, data)  => api.post(`/organizations/${orgId}/reactivate`, data || {}),
 
+  // Returns { owned, max, can_create } — used to gate create/reactivate UI.
+  freeCapStatus: () => api.get('/organizations/free-cap-status'),
+
   // Ownership transfer (owner only)
   transferOwnership:        (slug, newOwnerId) =>
                                 api.patch(`/organizations/${slug}/transfer-ownership`, { new_owner_id: newOwnerId }),

@@ -202,6 +202,7 @@ function OrgsView({ onOpenOrg }) {
   const [filter, setFilter]         = useState('all')
   const [page, setPage]             = useState(1)
   const [showCreate, setShowCreate] = useState(false)
+  const [capStatus, setCapStatus]   = useState(null) // { owned, max, can_create }
 
   const fetchOrgs = useCallback((targetPage = page, soft = false) => {
     if (soft) setReloading(true); else setLoading(true)
@@ -219,7 +220,14 @@ function OrgsView({ onOpenOrg }) {
       .finally(() => { setLoading(false); setReloading(false) })
   }, [page])
 
+  const fetchCapStatus = useCallback(() => {
+    orgApi.freeCapStatus()
+      .then(setCapStatus)
+      .catch(() => setCapStatus(null)) // non-fatal — UI just won't gate
+  }, [])
+
   useEffect(() => { fetchOrgs(page) /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [page])
+  useEffect(() => { fetchCapStatus() }, [fetchCapStatus])
 
   // Client-side search + filter on the current page (cheap, just the slice)
   const filtered = useMemo(() => {
@@ -241,7 +249,13 @@ function OrgsView({ onOpenOrg }) {
     setShowCreate(false)
     setPage(1)
     fetchOrgs(1, true)
+    fetchCapStatus()
   }
+
+  const atFreeCap = !!capStatus && !capStatus.can_create
+  const capTitle  = atFreeCap
+    ? `You already own the maximum of ${capStatus.max} free-plan organizations`
+    : undefined
 
   const filters = [
     { id: 'all',      label: 'All' },
@@ -258,9 +272,19 @@ function OrgsView({ onOpenOrg }) {
       <div className="cc-ph">
         <div className="cc-ph-left">
           <h1 className="cc-ph-title">Organizations</h1>
-          <p className="cc-ph-sub">Manage the workspaces you belong to.</p>
+          <p className="cc-ph-sub">
+            Manage the workspaces you belong to.
+            {capStatus && (
+              <> Free orgs owned: <strong>{capStatus.owned}/{capStatus.max}</strong>.</>
+            )}
+          </p>
         </div>
-        <button className="cc-btn cc-btn-md cc-btn-primary" onClick={() => setShowCreate(true)}>
+        <button
+          className="cc-btn cc-btn-md cc-btn-primary"
+          onClick={() => setShowCreate(true)}
+          disabled={atFreeCap}
+          title={capTitle}
+        >
           <IconPlus />
           New organization
         </button>
@@ -328,7 +352,12 @@ function OrgsView({ onOpenOrg }) {
                       <>
                         <div className="cc-empty-title">No organizations yet</div>
                         <div className="cc-empty-sub">Create your first organization to get started with CyberCore.</div>
-                        <button className="cc-btn cc-btn-md cc-btn-primary" onClick={() => setShowCreate(true)}>
+                        <button
+                          className="cc-btn cc-btn-md cc-btn-primary"
+                          onClick={() => setShowCreate(true)}
+                          disabled={atFreeCap}
+                          title={capTitle}
+                        >
                           Create organization
                         </button>
                       </>
@@ -419,7 +448,11 @@ function OrgsView({ onOpenOrg }) {
       </div>
 
       {showCreate && (
-        <CreateOrgModal onClose={() => setShowCreate(false)} onCreate={handleCreated} />
+        <CreateOrgModal
+          capStatus={capStatus}
+          onClose={() => setShowCreate(false)}
+          onCreate={handleCreated}
+        />
       )}
     </>
   )

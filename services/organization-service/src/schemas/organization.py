@@ -48,6 +48,12 @@ class PaginatedOrganizationsResponse(BaseModel):
     page_size: int
     total_pages: int
 
+
+class FreeCapStatusResponse(BaseModel):
+    owned: int
+    max: int
+    can_create: bool
+
 class TransferOwnershipRequest(BaseModel):
     new_owner_id: str
 

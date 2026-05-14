@@ -5,17 +5,18 @@ function toSlug(name) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
 }
 
-export function CreateOrgModal({ onClose, onCreate }) {
+export function CreateOrgModal({ capStatus, onClose, onCreate }) {
   const [name, setName]       = useState('')
   const [desc, setDesc]       = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState(null)
 
   const slug = toSlug(name)
+  const atCap = !!capStatus && !capStatus.can_create
 
   async function handleSubmit(e) {
     e.preventDefault()
-    if (!name.trim()) return
+    if (!name.trim() || atCap) return
     setLoading(true)
     setError(null)
     try {
@@ -26,6 +27,8 @@ export function CreateOrgModal({ onClose, onCreate }) {
       })
       onCreate()
     } catch (err) {
+      // Backend may also reject with 409 if the cap was hit between this modal
+      // opening and submit — show the server's message verbatim, it's user-ready.
       setError(err?.data?.detail || 'Failed to create organization.')
       setLoading(false)
     }
@@ -50,6 +53,15 @@ export function CreateOrgModal({ onClose, onCreate }) {
         {/* Body */}
         <form onSubmit={handleSubmit}>
           <div className="cc-modal-body">
+            {atCap && (
+              <div className="cc-alert cc-alert--err">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="8" cy="8" r="6"/><path d="M8 5v3M8 11v.5"/>
+                </svg>
+                You already own the maximum of {capStatus.max} free-plan organizations
+                ({capStatus.owned}/{capStatus.max}).
+              </div>
+            )}
             {error && (
               <div className="cc-alert cc-alert--err">
                 <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -112,7 +124,8 @@ export function CreateOrgModal({ onClose, onCreate }) {
             <button
               type="submit"
               className="cc-btn cc-btn-md cc-btn-primary"
-              disabled={loading || !name.trim()}
+              disabled={loading || !name.trim() || atCap}
+              title={atCap ? `Free-plan org limit reached (${capStatus.owned}/${capStatus.max})` : undefined}
             >
               {loading ? (
                 <><span className="cc-spin" /> Creating…</>

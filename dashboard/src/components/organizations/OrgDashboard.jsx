@@ -97,9 +97,25 @@ const IconShield = () => (
 function InactiveBanner({ org, role, onReactivated }) {
   const [busy, setBusy]   = useState(false)
   const [error, setError] = useState(null)
+  const [capStatus, setCapStatus] = useState(null)
   const isOwner = role === 'owner'
+  const isFree  = (org.plan || 'free') === 'free'
+
+  // Cap only applies to free-plan reactivation, and only the owner can reactivate.
+  useEffect(() => {
+    if (!isOwner || !isFree) return
+    orgApi.freeCapStatus()
+      .then(setCapStatus)
+      .catch(() => setCapStatus(null))
+  }, [isOwner, isFree])
+
+  const atCap = isFree && !!capStatus && !capStatus.can_create
+  const capTitle = atCap
+    ? `You already own ${capStatus.owned}/${capStatus.max} free-plan organizations — delete or transfer one before reactivating.`
+    : undefined
 
   async function reactivate() {
+    if (atCap) return
     setBusy(true)
     setError(null)
     try {
@@ -119,12 +135,19 @@ function InactiveBanner({ org, role, onReactivated }) {
           <div className="cc-banner__title">This organization is inactive</div>
           <div className="cc-banner__sub">
             {isOwner
-              ? 'Members can no longer be invited and integrations are paused. You can reactivate it at any time.'
+              ? (atCap
+                  ? `Free-plan org limit reached (${capStatus.owned}/${capStatus.max}). Delete or transfer another free org before you can reactivate this one.`
+                  : 'Members can no longer be invited and integrations are paused. You can reactivate it at any time.')
               : 'The owner deactivated this workspace. Some actions are unavailable until it is reactivated.'}
           </div>
         </div>
         {isOwner && (
-          <button className="cc-btn cc-btn-md cc-btn-primary" onClick={reactivate} disabled={busy}>
+          <button
+            className="cc-btn cc-btn-md cc-btn-primary"
+            onClick={reactivate}
+            disabled={busy || atCap}
+            title={capTitle}
+          >
             {busy ? <><span className="cc-spin" /> Reactivating…</> : <><IconPower /> Reactivate</>}
           </button>
         )}
