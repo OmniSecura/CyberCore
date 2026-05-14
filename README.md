@@ -219,7 +219,7 @@ Unified notification layer for all CyberCore events.
 ### Run the core stack
 
 ```bash
-git clone https://github.com/yourname/cybercore.git
+git clone https://github.com/OmniSecura/CyberCore.git
 cd cybercore
 
 cp .env.example .env
