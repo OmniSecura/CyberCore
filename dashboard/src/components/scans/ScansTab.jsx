@@ -337,16 +337,18 @@ function ScanList({ slug, plan, has, onSelect }) {
 
   const load = useCallback(() => {
     setLoading(true)
+    // Two calls instead of three: the dedicated /stats endpoint returns all
+    // status counts in a single GROUP BY, replacing two extra list() calls
+    // (each of which previously triggered the full auth + privilege + org
+    // resolve chain — six inter-service hops dropped per refresh).
     Promise.all([
       scanApi.list(slug, { offset: (page - 1) * PAGE_SIZE, limit: PAGE_SIZE, status: statusFilter }),
-      // Always fetch active count separately (independent of page/filter)
-      scanApi.list(slug, { offset: 0, limit: 1, status: 'queued' }),
-      scanApi.list(slug, { offset: 0, limit: 1, status: 'running' }),
+      scanApi.stats(slug),
     ])
-      .then(([main, q, r]) => {
+      .then(([main, stats]) => {
         setScans(main.items)
         setTotal(main.total)
-        setActiveCount(q.total + r.total)
+        setActiveCount((stats.queued || 0) + (stats.running || 0))
         setLoading(false)
       })
       .catch(ex => { setErr(ex?.data?.detail || 'Failed to load scans.'); setLoading(false) })
@@ -573,9 +575,12 @@ function FindingRow({ finding }) {
 
 // ─── Findings content ─────────────────────────────────────────────────────────
 
+const FINDINGS_PAGE_SIZE = 100
+
 function FindingsContent({ slug, jobId, scan }) {
   const [findings, setFindings]         = useState([])
   const [total, setTotal]               = useState(0)
+  const [page, setPage]                 = useState(1)
   const [severityCounts, setSevCounts]  = useState({})
   const [loading, setLoading]           = useState(true)
   const [err, setErr]                   = useState(null)
@@ -583,12 +588,22 @@ function FindingsContent({ slug, jobId, scan }) {
   const [sevFilter, setSevFilter]       = useState(null)
 
   const isTerminal = scan.status === 'completed' || scan.status === 'failed'
+  const totalPages = Math.max(1, Math.ceil(total / FINDINGS_PAGE_SIZE))
+
+  // Reset to page 1 whenever filters change, otherwise we'd land on an empty
+  // page when narrowing down.
+  useEffect(() => { setPage(1) }, [toolFilter, sevFilter])
 
   useEffect(() => {
     if (!isTerminal) { setLoading(false); return }
     setLoading(true)
     scanApi
-      .findings(slug, jobId, { limit: 200, tool: toolFilter || undefined, severity: sevFilter || undefined })
+      .findings(slug, jobId, {
+        offset: (page - 1) * FINDINGS_PAGE_SIZE,
+        limit: FINDINGS_PAGE_SIZE,
+        tool: toolFilter || undefined,
+        severity: sevFilter || undefined,
+      })
       .then(data => {
         setFindings(data.items)
         setTotal(data.total)
@@ -596,7 +611,7 @@ function FindingsContent({ slug, jobId, scan }) {
         setLoading(false)
       })
       .catch(ex => { setErr(ex?.data?.detail || 'Failed to load findings.'); setLoading(false) })
-  }, [slug, jobId, toolFilter, sevFilter, isTerminal])
+  }, [slug, jobId, toolFilter, sevFilter, page, isTerminal])
 
   if (scan.status === 'queued' || scan.status === 'running') {
     return (
@@ -658,8 +673,10 @@ function FindingsContent({ slug, jobId, scan }) {
         )}
       </div>
 
-      {/* Tool filter tabs */}
-      {tools.length > 1 && !sevFilter && (
+      {/* Tool filter tabs — always visible when more than one tool present.
+          The two filters are independent: severity narrows by severity AND
+          tool narrows by tool, both applied server-side. */}
+      {tools.length > 1 && (
         <div className="sc-tool-tabs">
           <button className={`sc-tool-tab${!toolFilter ? ' sc-tool-tab--on' : ''}`} onClick={() => setToolFilter(null)}>
             All <span className="sc-tool-count">{total}</span>
@@ -721,6 +738,20 @@ function FindingsContent({ slug, jobId, scan }) {
             </div>
           ))
         )
+      )}
+
+      {!loading && total > FINDINGS_PAGE_SIZE && (
+        <div className="cc-table-foot">
+          <span>
+            Showing {((page - 1) * FINDINGS_PAGE_SIZE + 1).toLocaleString()}–
+            {Math.min(page * FINDINGS_PAGE_SIZE, total).toLocaleString()} of {total.toLocaleString()} findings
+          </span>
+          <div className="cc-pager">
+            <button className="cc-page-btn" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>‹</button>
+            <span className="cc-page-info">{page} / {totalPages}</span>
+            <button className="cc-page-btn" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>›</button>
+          </div>
+        </div>
       )}
     </div>
   )
@@ -880,18 +911,42 @@ function ScanDetail({ slug, jobId, has, onBack }) {
 
   useEffect(() => {
     load()
-    return () => clearInterval(pollRef.current)
+    return () => clearTimeout(pollRef.current)
   }, [load])
 
-  // Poll while the scan is active
+  // Poll while the scan is active, with exponential backoff capped at 15 s.
+  // The old constant 3 s interval blasted the API throughout long-running
+  // scans; backing off keeps short scans snappy and long ones cheap.
   useEffect(() => {
-    clearInterval(pollRef.current)
-    if (scan && (scan.status === 'queued' || scan.status === 'running')) {
-      pollRef.current = setInterval(() => {
-        scanApi.get(slug, jobId).then(data => setScan(data)).catch(() => {})
-      }, 3000)
+    clearTimeout(pollRef.current)
+    if (!scan || (scan.status !== 'queued' && scan.status !== 'running')) return
+
+    let cancelled = false
+    let delay = 3000
+    const MAX_DELAY = 15000
+
+    const tick = () => {
+      pollRef.current = setTimeout(async () => {
+        if (cancelled) return
+        try {
+          const data = await scanApi.get(slug, jobId)
+          if (cancelled) return
+          setScan(data)
+          if (data.status === 'queued' || data.status === 'running') {
+            delay = Math.min(Math.round(delay * 1.5), MAX_DELAY)
+            tick()
+          }
+        } catch {
+          if (!cancelled) {
+            delay = Math.min(Math.round(delay * 1.5), MAX_DELAY)
+            tick()
+          }
+        }
+      }, delay)
     }
-    return () => clearInterval(pollRef.current)
+    tick()
+
+    return () => { cancelled = true; clearTimeout(pollRef.current) }
   }, [scan?.status, slug, jobId])
 
   async function doCancel() {

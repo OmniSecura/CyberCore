@@ -13,8 +13,11 @@ from ...schemas.scan import (
     ScanJobOut,
     ScanJobDetailOut,
     ScanJobListOut,
+    ScanStatusCountsOut,
     FindingsListOut,
 )
+from ...security.cache import org_id_cache
+from ...security.http_client import get_org_service_client
 from ...security.org_privilege import require_org_privilege
 from ...security.current_user import get_current_user_id
 from ...services.scan_service import ScanService
@@ -25,22 +28,33 @@ ORG_SERVICE_URL = os.getenv("ORG_SERVICE_URL", "http://localhost:8081")
 
 
 async def _resolve_org_id(slug: str, request: Request) -> str:
-    """Resolve org slug → UUID via organization service (forwards auth cookies)."""
+    """Resolve org slug → UUID via organization service.
+
+    Cached for SCAN_ORG_ID_CACHE_TTL_SECONDS (5 min default) — slug→UUID
+    mappings are essentially immutable. The cache is global (not cookie-keyed)
+    because the response is the same regardless of caller. The privilege check
+    that runs alongside this lookup is what enforces access; this function is
+    pure name resolution.
+    """
+    cached = org_id_cache.get(slug)
+    if cached is not None:
+        return cached
+
+    client = get_org_service_client()
     try:
-        async with httpx.AsyncClient() as client:
-            r = await client.get(
-                f"{ORG_SERVICE_URL}/api/v1/organizations/{slug}",
-                cookies=request.cookies,
-                timeout=5.0,
-            )
-        if r.is_success:
-            return r.json()["id"]
-        if r.status_code == 404:
-            raise HTTPException(status_code=404, detail="Organization not found")
-    except HTTPException:
-        raise
-    except Exception:
-        pass
+        r = await client.get(
+            f"{ORG_SERVICE_URL}/api/v1/organizations/{slug}",
+            cookies=request.cookies,
+            timeout=5.0,
+        )
+    except httpx.RequestError:
+        raise HTTPException(status_code=502, detail="Organization service unavailable")
+    if r.is_success:
+        org_id = r.json()["id"]
+        org_id_cache.set(slug, org_id)
+        return org_id
+    if r.status_code == 404:
+        raise HTTPException(status_code=404, detail="Organization not found")
     raise HTTPException(status_code=502, detail="Organization service unavailable")
 
 
@@ -109,6 +123,22 @@ async def list_scans(
     return ScanJobListOut(total=total, items=items)
 
 
+# ── Stats (per-status counts) ──────────────────────────────────────────────────
+
+@scan_router.get(
+    "/organizations/{slug}/scans/stats",
+    response_model=ScanStatusCountsOut,
+)
+async def scan_stats(
+    slug: str,
+    request: Request,
+    svc: ScanService = Depends(_svc),
+    _priv: None = require_org_privilege("scans.view"),
+):
+    org_id = await _resolve_org_id(slug, request)
+    return ScanStatusCountsOut(**svc.get_status_counts(org_id))
+
+
 # ── Get scan detail ────────────────────────────────────────────────────────────
 
 @scan_router.get(
@@ -137,7 +167,7 @@ async def list_findings(
     job_id: str,
     request: Request,
     offset: int = Query(default=0, ge=0),
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(default=100, ge=1, le=500),
     severity: Optional[str] = Query(default=None),
     tool: Optional[str] = Query(default=None),
     svc: ScanService = Depends(_svc),
@@ -147,7 +177,12 @@ async def list_findings(
     total, items, severity_counts = svc.list_findings(
         org_id, job_id, offset, limit, severity, tool
     )
-    return FindingsListOut(total=total, items=items, severity_counts=severity_counts)
+    return FindingsListOut(
+        total=total,
+        items=items,
+        severity_counts=severity_counts,
+        truncated=(offset + len(items)) < total,
+    )
 
 
 # ── Cancel scan ────────────────────────────────────────────────────────────────

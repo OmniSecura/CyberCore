@@ -1,9 +1,18 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Optional
+from urllib.parse import urlparse
 
-from pydantic import BaseModel, field_validator, HttpUrl
+from pydantic import BaseModel, field_validator
+
+
+# Allowed schemes for the user-supplied repository URL. We deliberately reject
+# any other transport (ssh://, ext::, file://, scp-style …) — see the matching
+# validator in the worker's git_utils.validate_git_url.
+_ALLOWED_GIT_SCHEMES = ("http", "https", "git")
+_HOST_RE = re.compile(r"^[A-Za-z0-9.\-]{1,255}$")
 
 
 # ── Request schemas ────────────────────────────────────────────────────────────
@@ -18,6 +27,19 @@ class SubmitGitScanRequest(BaseModel):
         v = v.strip()
         if not v:
             raise ValueError("target_url must not be empty")
+        if v.startswith("-"):
+            raise ValueError("target_url must not start with '-'")
+        if any(ch.isspace() or ord(ch) < 0x20 for ch in v):
+            raise ValueError("target_url must not contain whitespace or control characters")
+        parsed = urlparse(v)
+        scheme = (parsed.scheme or "").lower()
+        if scheme not in _ALLOWED_GIT_SCHEMES:
+            raise ValueError(
+                f"Unsupported URL scheme '{parsed.scheme}'. "
+                f"Allowed: {', '.join(_ALLOWED_GIT_SCHEMES)}"
+            )
+        if not parsed.hostname or not _HOST_RE.match(parsed.hostname):
+            raise ValueError("target_url must include a valid hostname")
         return v
 
     @field_validator("name")
@@ -62,6 +84,7 @@ class ScanJobOut(BaseModel):
     status: str
     target_type: str
     target_url: Optional[str]
+    target_path: Optional[str] = None
     celery_task_id: Optional[str]
     started_at: Optional[datetime]
     completed_at: Optional[datetime]
@@ -75,8 +98,13 @@ class ScanJobOut(BaseModel):
 
 
 class ScanJobDetailOut(ScanJobOut):
-    findings: list[ScanFindingOut] = []
-
+    # NOTE: previously this declared `findings: list[ScanFindingOut] = []`,
+    # which made Pydantic with `from_attributes=True` access `job.findings`
+    # and trigger SQLAlchemy lazy-loading of every finding on each detail
+    # request. The dashboard polls this endpoint every 3 s while a scan is
+    # active and never uses the embedded list (it calls /findings separately),
+    # so loading thousands of rows per poll was pure waste. The detail view
+    # is now identical to the list view — clients should hit /findings.
     model_config = {"from_attributes": True}
 
 
@@ -85,7 +113,19 @@ class ScanJobListOut(BaseModel):
     items: list[ScanJobOut]
 
 
+class ScanStatusCountsOut(BaseModel):
+    queued: int = 0
+    running: int = 0
+    completed: int = 0
+    failed: int = 0
+    cancelled: int = 0
+    total: int = 0
+
+
 class FindingsListOut(BaseModel):
     total: int
     items: list[ScanFindingOut]
     severity_counts: dict[str, int]
+    # True when len(items) < total — UI uses this to show a "results truncated"
+    # banner instead of silently misrepresenting per-tool counts.
+    truncated: bool = False

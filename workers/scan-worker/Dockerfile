@@ -22,11 +22,8 @@ RUN curl -sSfL \
     && chmod +x /usr/local/bin/gosec
 
 # ── Trivy (vuln scanner + IaC misconfig) ─────────────────────────────────────
-ARG TRIVY_VERSION=0.52.2
-RUN curl -sSfL \
-      "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
-    | tar -xz -C /usr/local/bin trivy \
-    && chmod +x /usr/local/bin/trivy
+RUN curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+    | sh -s -- -b /usr/local/bin
 
 # ── Hadolint (Dockerfile linter) ─────────────────────────────────────────────
 ARG HADOLINT_VERSION=2.12.0
@@ -38,9 +35,12 @@ RUN curl -sSfL \
 
 WORKDIR /app
 
-# ── Python deps (includes pip-audit, bandit, semgrep, checkov) ───────────────
+# ── Python deps (includes pip-audit, bandit, semgrep, celery, SQLAlchemy) ────
+# PyMySQL is required by the mysql+pymysql SQLAlchemy driver.
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+        PyMySQL>=1.1.0 \
+        cryptography>=42.0.0
 
 COPY . .
 
