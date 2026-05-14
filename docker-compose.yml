@@ -211,6 +211,61 @@ services:
       - scan_uploads:/tmp/cybercore/uploads
     # No ports — Celery workers don't expose HTTP
 
+  # ── DAST worker ─────────────────────────────────────────────────────────────
+  # Separate worker process so DAST scans (single scan can pin a slot for 1 h)
+  # never block the much shorter SAST queue. Same image as `worker`, different
+  # CMD + queue.
+  dast-worker:
+    build:
+      context: ./workers/scan-worker
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks: [cybercore_net]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      zap:
+        condition: service_started
+    environment:
+      <<: *db-env
+      MYSQL_DB: scan_db
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      ZAP_HOST: zap
+      ZAP_PORT: "8090"
+      ZAP_API_KEY: ${ZAP_API_KEY:-cybercore-dev}
+    command: >
+      python -m celery -A src.celery_app:celery_app worker
+      --loglevel=INFO
+      --queues=dast
+      --concurrency=1
+      --hostname=dast-worker@%h
+
+  # ── OWASP ZAP daemon ────────────────────────────────────────────────────────
+  # The DAST engine. Runs headless in daemon mode exposing the REST API on
+  # port 8090. We never publish the port to the host — only the dast-worker
+  # talks to it over the internal `cybercore_net` network.
+  #
+  # The API key MUST be set in production. Default `cybercore-dev` is for
+  # local development convenience only.
+  zap:
+    image: zaproxy/zap-stable
+    restart: unless-stopped
+    networks: [cybercore_net]
+    user: zap
+    command: >
+      zap.sh -daemon
+      -host 0.0.0.0
+      -port 8090
+      -config api.key=${ZAP_API_KEY:-cybercore-dev}
+      -config api.addrs.addr.name=.*
+      -config api.addrs.addr.regex=true
+      -config api.disablekey=false
+    # ZAP daemon takes 10–30 s to fully boot — the runner has its own retry
+    # loop so we don't bother with a Compose healthcheck.
+
   # ════════════════════════════════════════════════════════════════════════════
   #  Frontend
   # ════════════════════════════════════════════════════════════════════════════

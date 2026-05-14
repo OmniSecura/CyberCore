@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from ...database.db_connection import get_db
 from ...schemas.scan import (
     SubmitGitScanRequest,
+    SubmitWebScanRequest,
     ScanJobOut,
     ScanJobDetailOut,
     ScanJobListOut,
@@ -79,6 +80,25 @@ async def submit_git_scan(
 ):
     org_id = await _resolve_org_id(slug, request)
     return svc.submit_git_scan(org_id, user_id, body)
+
+
+# ── Submit web (DAST) scan ─────────────────────────────────────────────────────
+
+@scan_router.post(
+    "/organizations/{slug}/scans/web",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=ScanJobOut,
+)
+async def submit_web_scan(
+    slug: str,
+    request: Request,
+    body: SubmitWebScanRequest,
+    user_id: str = Depends(get_current_user_id),
+    svc: ScanService = Depends(_svc),
+    _priv: None = require_org_privilege("scans.run"),
+):
+    org_id = await _resolve_org_id(slug, request)
+    return svc.submit_web_scan(org_id, user_id, body)
 
 
 # ── Submit upload scan ─────────────────────────────────────────────────────────

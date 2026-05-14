@@ -86,6 +86,8 @@ export const scanApi = {
     return api.get(`/scans/organizations/${slug}/scans/${jobId}/findings?${qs}`)
   },
   submitGit: (slug, data)  => api.post(`/scans/organizations/${slug}/scans/git`, data),
+  // DAST submit. `data = { name, target_url, profile: 'passive' | 'active' }`
+  submitWeb: (slug, data)  => api.post(`/scans/organizations/${slug}/scans/web`, data),
   submitUpload: async (slug, name, file) => {
     const fd = new FormData()
     fd.append('name', name)

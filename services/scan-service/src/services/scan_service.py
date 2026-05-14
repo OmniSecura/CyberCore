@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..database.models.ScanJob import ScanJob
 from ..database.models.ScanFinding import ScanFinding
-from ..schemas.scan import SubmitGitScanRequest
+from ..schemas.scan import SubmitGitScanRequest, SubmitWebScanRequest
 
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
@@ -199,6 +199,46 @@ class ScanService:
             "scan_worker.tasks.sast.run_sast_scan",
             args=[job.id],
             queue="sast",
+        )
+        job.celery_task_id = task.id
+        self.db.commit()
+        return job
+
+    # ── Submit DAST ────────────────────────────────────────────────────────────
+
+    def submit_web_scan(
+        self,
+        organization_id: str,
+        user_id: str,
+        body: SubmitWebScanRequest,
+    ) -> ScanJob:
+        """
+        Queue a DAST scan against a live web target. The profile (`passive` or
+        `active`) is stored in `extra` and read by the worker — the row schema
+        is otherwise identical to a SAST job, so the existing list/detail/
+        cancel/delete endpoints keep working without changes.
+        """
+        self._enforce_quota(organization_id)
+
+        job = ScanJob(
+            id=str(uuid.uuid4()),
+            organization_id=organization_id,
+            created_by=user_id,
+            name=body.name,
+            scan_type="dast",
+            status="queued",
+            target_type="web_url",
+            target_url=body.target_url,
+            extra={"profile": body.profile},
+        )
+        self.db.add(job)
+        self.db.commit()
+        self.db.refresh(job)
+
+        task = _celery.send_task(
+            "scan_worker.tasks.dast.run_dast_scan",
+            args=[job.id],
+            queue="dast",
         )
         job.celery_task_id = task.id
         self.db.commit()

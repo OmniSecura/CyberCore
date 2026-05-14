@@ -133,9 +133,14 @@ function SevBadge({ severity }) {
 const FREE_SCAN_LIMIT = 3
 
 function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
-  const [mode, setMode]       = useState('git')   // 'git' | 'zip'
+  // scanType: 'sast' | 'dast' — top-level switch determines the rest of the form
+  const [scanType, setScanType] = useState('sast')
+  // SAST source: 'git' | 'zip'
+  const [mode, setMode]       = useState('git')
+  // DAST profile: 'passive' | 'active'
+  const [profile, setProfile] = useState('passive')
   const [name, setName]       = useState('')
-  const [url, setUrl]         = useState('')
+  const [url, setUrl]         = useState('')   // shared by SAST git-mode and DAST
   const [file, setFile]       = useState(null)
   const [loading, setLoading] = useState(false)
   const [err, setErr]         = useState(null)
@@ -144,8 +149,11 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
   const isFree       = plan === 'free'
   const limitReached = isFree && activeCount >= FREE_SCAN_LIMIT
 
-  const canSubmit = !loading && !limitReached && name.trim() &&
-    (mode === 'git' ? url.trim() : !!file)
+  const canSubmit = !loading && !limitReached && name.trim() && (
+    scanType === 'dast'
+      ? url.trim()
+      : (mode === 'git' ? url.trim() : !!file)
+  )
 
   async function submit(e) {
     e.preventDefault()
@@ -153,7 +161,13 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
     setLoading(true); setErr(null)
     try {
       let job
-      if (mode === 'git') {
+      if (scanType === 'dast') {
+        job = await scanApi.submitWeb(slug, {
+          name: name.trim(),
+          target_url: url.trim(),
+          profile,
+        })
+      } else if (mode === 'git') {
         job = await scanApi.submitGit(slug, { name: name.trim(), target_url: url.trim() })
       } else {
         job = await scanApi.submitUpload(slug, name.trim(), file)
@@ -163,6 +177,16 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
       setErr(ex?.data?.detail || 'Failed to submit scan.')
       setLoading(false)
     }
+  }
+
+  // Switching scan type resets the inner mode/inputs so we don't carry over
+  // a SAST git URL into a DAST form by accident.
+  function pickScanType(t) {
+    setScanType(t)
+    setErr(null)
+    setUrl('')
+    setFile(null)
+    if (fileRef.current) fileRef.current.value = ''
   }
 
   function handleFile(e) {
@@ -183,8 +207,14 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
         {/* Header */}
         <div className="cc-modal-head">
           <div>
-            <div className="cc-modal-title">New SAST Scan</div>
-            <div className="cc-modal-sub">Detect security vulnerabilities in your code</div>
+            <div className="cc-modal-title">
+              New {scanType === 'dast' ? 'DAST' : 'SAST'} Scan
+            </div>
+            <div className="cc-modal-sub">
+              {scanType === 'dast'
+                ? 'Test a running web application for security issues'
+                : 'Detect security vulnerabilities in your code'}
+            </div>
           </div>
           <button className="cc-modal-x" onClick={onClose} type="button"><IconX /></button>
         </div>
@@ -211,23 +241,43 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
 
             {err && <div className="cc-alert cc-alert--err"><IconErr />{err}</div>}
 
-            {/* Source type tabs */}
-            <div className="sc-mode-tabs">
+            {/* Scan type selector — top-level choice between SAST and DAST */}
+            <div className="sc-mode-tabs" style={{ marginBottom: 16 }}>
               <button
                 type="button"
-                className={`sc-mode-tab${mode === 'git' ? ' sc-mode-tab--on' : ''}`}
-                onClick={() => { setMode('git'); setErr(null) }}
+                className={`sc-mode-tab${scanType === 'sast' ? ' sc-mode-tab--on' : ''}`}
+                onClick={() => pickScanType('sast')}
               >
-                <IconGit /> Git URL
+                <IconCode /> SAST · Source code
               </button>
               <button
                 type="button"
-                className={`sc-mode-tab${mode === 'zip' ? ' sc-mode-tab--on' : ''}`}
-                onClick={() => { setMode('zip'); setErr(null) }}
+                className={`sc-mode-tab${scanType === 'dast' ? ' sc-mode-tab--on' : ''}`}
+                onClick={() => pickScanType('dast')}
               >
-                <IconZip /> ZIP Archive
+                <IconScan /> DAST · Running app
               </button>
             </div>
+
+            {/* SAST source-type tabs (git / zip) — only visible for SAST */}
+            {scanType === 'sast' && (
+              <div className="sc-mode-tabs">
+                <button
+                  type="button"
+                  className={`sc-mode-tab${mode === 'git' ? ' sc-mode-tab--on' : ''}`}
+                  onClick={() => { setMode('git'); setErr(null) }}
+                >
+                  <IconGit /> Git URL
+                </button>
+                <button
+                  type="button"
+                  className={`sc-mode-tab${mode === 'zip' ? ' sc-mode-tab--on' : ''}`}
+                  onClick={() => { setMode('zip'); setErr(null) }}
+                >
+                  <IconZip /> ZIP Archive
+                </button>
+              </div>
+            )}
 
             {/* Scan name */}
             <div className="cc-mfield">
@@ -235,15 +285,71 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
               <input
                 value={name}
                 onChange={e => setName(e.target.value)}
-                placeholder="e.g. Main branch — sprint 42"
+                placeholder={scanType === 'dast'
+                  ? 'e.g. Production app — staging URL'
+                  : 'e.g. Main branch — sprint 42'}
                 required
                 autoFocus
                 disabled={limitReached}
               />
             </div>
 
-            {/* Git URL mode */}
-            {mode === 'git' && (
+            {/* DAST: target URL + profile */}
+            {scanType === 'dast' && (
+              <>
+                <div className="cc-mfield">
+                  <label>Target URL</label>
+                  <input
+                    value={url}
+                    onChange={e => setUrl(e.target.value)}
+                    placeholder="https://app.example.com"
+                    required
+                    disabled={limitReached}
+                  />
+                  <div style={{
+                    font: '400 12px/1.4 var(--font-body)',
+                    color: '#8899AA',
+                    marginTop: 6,
+                  }}>
+                    Only scan applications you own or have written permission to test.
+                  </div>
+                </div>
+
+                <div className="cc-mfield">
+                  <label>Scan profile</label>
+                  <div className="sc-mode-tabs" style={{ marginTop: 4 }}>
+                    <button
+                      type="button"
+                      className={`sc-mode-tab${profile === 'passive' ? ' sc-mode-tab--on' : ''}`}
+                      onClick={() => setProfile('passive')}
+                      disabled={limitReached}
+                    >
+                      Passive (safe)
+                    </button>
+                    <button
+                      type="button"
+                      className={`sc-mode-tab${profile === 'active' ? ' sc-mode-tab--on' : ''}`}
+                      onClick={() => setProfile('active')}
+                      disabled={limitReached}
+                    >
+                      Active (sends attack payloads)
+                    </button>
+                  </div>
+                  <div style={{
+                    font: '400 12px/1.5 var(--font-body)',
+                    color: '#8899AA',
+                    marginTop: 8,
+                  }}>
+                    {profile === 'passive'
+                      ? 'Crawls the app and inspects headers, cookies, TLS, and form structure. No attack payloads are sent.'
+                      : 'In addition to the passive checks, ZAP will send real attack payloads (XSS, SQLi, command injection, SSRF, …) to discovered endpoints. Use only on apps you own.'}
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Git URL mode (SAST only) */}
+            {scanType === 'sast' && mode === 'git' && (
               <div className="cc-mfield">
                 <label>Repository URL</label>
                 <input
@@ -256,8 +362,8 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
               </div>
             )}
 
-            {/* ZIP mode */}
-            {mode === 'zip' && (
+            {/* ZIP mode (SAST only) */}
+            {scanType === 'sast' && mode === 'zip' && (
               <div className="cc-mfield">
                 <label>ZIP archive</label>
                 <div
@@ -366,7 +472,7 @@ function ScanList({ slug, plan, has, onSelect }) {
         <div>
           <div style={{ font: '600 15px/1 var(--font-display)', color: '#0A1628' }}>Security Scans</div>
           <div style={{ font: '400 13px/1.5 var(--font-body)', color: '#8899AA', marginTop: 4 }}>
-            Run SAST analysis to detect vulnerabilities in your repositories
+            Run SAST on source code or DAST on a live web target
           </div>
         </div>
         {has('scans.run') && (
@@ -823,7 +929,11 @@ function OverviewContent({ scan }) {
           <div className="cc-info-row">
             <div className="cc-info-k">Source</div>
             <div className="cc-info-v">
-              {scan.target_type === 'git_url' ? 'Git Repository' : 'ZIP Upload'}
+              {scan.target_type === 'git_url'
+                ? 'Git Repository'
+                : scan.target_type === 'web_url'
+                  ? 'Web Application'
+                  : 'ZIP Upload'}
             </div>
           </div>
           {scan.target_url && (
@@ -831,6 +941,29 @@ function OverviewContent({ scan }) {
               <div className="cc-info-k">URL</div>
               <div className="cc-info-v cc-info-v--mono" style={{ wordBreak: 'break-all' }}>
                 {scan.target_url}
+              </div>
+            </div>
+          )}
+          {scan.scan_type === 'dast' && scan.extra?.profile && (
+            <div className="cc-info-row">
+              <div className="cc-info-k">Profile</div>
+              <div className="cc-info-v" style={{ textTransform: 'capitalize' }}>
+                {scan.extra.profile}
+              </div>
+            </div>
+          )}
+          {scan.status === 'running' && scan.scan_type === 'dast' && scan.extra && (
+            <div className="cc-info-row">
+              <div className="cc-info-k">Phase</div>
+              <div className="cc-info-v">
+                <span style={{ textTransform: 'capitalize' }}>
+                  {scan.extra.current_phase || 'starting'}
+                </span>
+                {typeof scan.extra.progress === 'number' && (
+                  <span style={{ color: '#8899AA', marginLeft: 8 }}>
+                    {scan.extra.progress}%
+                  </span>
+                )}
               </div>
             </div>
           )}
