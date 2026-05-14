@@ -89,14 +89,74 @@ def clone_repo(url: str, dest: Path, depth: int = 1) -> None:
     log.info("Cloned %s → %s", safe_url, dest)
 
 
-def extract_zip(zip_path: str | Path, dest: Path) -> None:
-    """Extract a ZIP archive into dest."""
+_DEFAULT_MAX_UNCOMPRESSED = int(
+    os.getenv("SCAN_ZIP_MAX_UNCOMPRESSED_BYTES", str(5 * 1024 * 1024 * 1024))  # 5 GiB
+)
+_DEFAULT_MAX_ENTRIES = int(os.getenv("SCAN_ZIP_MAX_ENTRIES", "200000"))
+
+
+def extract_zip(
+    zip_path: str | Path,
+    dest: Path,
+    max_uncompressed_bytes: int = _DEFAULT_MAX_UNCOMPRESSED,
+    max_entries: int = _DEFAULT_MAX_ENTRIES,
+) -> None:
+    """
+    Extract a ZIP archive into ``dest`` with two defenses:
+
+      • zip-slip — every entry is resolved against ``dest`` and rejected if it
+        escapes the destination directory (absolute paths, leading "/", "..",
+        or symlink-style traversal). Python's own zipfile.extractall sanitises
+        most of this since 3.6.2 but we belt-and-brace it.
+      • zip-bomb — both the uncompressed total size and the entry count are
+        bounded. Limits configurable via SCAN_ZIP_MAX_UNCOMPRESSED_BYTES /
+        SCAN_ZIP_MAX_ENTRIES.
+
+    Raises RuntimeError on any violation; the caller (the SAST task) catches
+    that and marks the job as failed.
+    """
     if dest.exists():
         _rmtree(dest)
     dest.mkdir(parents=True, exist_ok=True)
+    dest_resolved = dest.resolve()
+
     with zipfile.ZipFile(zip_path, "r") as zf:
+        infos = zf.infolist()
+        if len(infos) > max_entries:
+            raise RuntimeError(
+                f"ZIP rejected: too many entries ({len(infos)} > {max_entries})"
+            )
+
+        total_uncompressed = 0
+        for info in infos:
+            name = info.filename
+            # Reject absolute paths and traversal at the string level first —
+            # cheaper than resolving every entry, catches the obvious cases.
+            if name.startswith(("/", "\\")) or any(
+                part in ("..",) for part in Path(name).parts
+            ):
+                raise RuntimeError(f"ZIP rejected: unsafe entry path '{name}'")
+
+            # Then verify the resolved target really lives inside dest.
+            target = (dest / name).resolve()
+            try:
+                target.relative_to(dest_resolved)
+            except ValueError:
+                raise RuntimeError(f"ZIP rejected: entry escapes target '{name}'")
+
+            total_uncompressed += info.file_size
+            if total_uncompressed > max_uncompressed_bytes:
+                raise RuntimeError(
+                    f"ZIP rejected: uncompressed size exceeds "
+                    f"{max_uncompressed_bytes} bytes"
+                )
+
         zf.extractall(dest)
-    log.info("Extracted %s → %s", zip_path, dest)
+
+    log.info(
+        "Extracted %s → %s (%d entries, %d bytes)",
+        zip_path, dest, len(infos), total_uncompressed,
+    )
 
 
 def cleanup(path: Path) -> None:

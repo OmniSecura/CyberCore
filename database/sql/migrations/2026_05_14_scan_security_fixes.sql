@@ -37,6 +37,26 @@ EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
 
+-- ── 1b. scan_jobs: drop now-redundant idx_scan_jobs_org_id ──────────────────
+-- The composite index above starts with organization_id, so a standalone
+-- index on the same column is dead weight (extra writes, extra disk).
+SET @drop_exists := (
+    SELECT COUNT(*) FROM information_schema.STATISTICS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME   = 'scan_jobs'
+      AND INDEX_NAME   = 'idx_scan_jobs_org_id'
+);
+
+SET @sql := IF(
+    @drop_exists = 1,
+    'DROP INDEX idx_scan_jobs_org_id ON scan_jobs',
+    'SELECT ''idx_scan_jobs_org_id already absent — skipping'' AS note'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+
 -- ── 2. scan_findings: report duplicates BEFORE attempting the constraint ────
 -- A non-zero result here means the ALTER below will fail. Clean up first.
 SELECT

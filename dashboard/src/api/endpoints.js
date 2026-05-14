@@ -75,7 +75,8 @@ export const scanApi = {
     return api.get(`/scans/organizations/${slug}/scans?${qs}`)
   },
   get:      (slug, jobId)  => api.get(`/scans/organizations/${slug}/scans/${jobId}`),
-  findings: (slug, jobId, { offset = 0, limit = 200, severity, tool } = {}) => {
+  stats:    (slug)         => api.get(`/scans/organizations/${slug}/scans/stats`),
+  findings: (slug, jobId, { offset = 0, limit = 100, severity, tool } = {}) => {
     const qs = new URLSearchParams({ offset, limit })
     if (severity) qs.set('severity', severity)
     if (tool)     qs.set('tool', tool)

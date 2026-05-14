@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+
+from sqlalchemy import insert
 
 from ..celery_app import celery_app
 from ..database.db_connection import db_session
@@ -35,15 +38,34 @@ from ..utils.git_utils import clone_repo, extract_zip, cleanup
 log = logging.getLogger(__name__)
 
 
-def _has_ext(directory: Path, *extensions: str) -> bool:
-    """Return True if any file with one of the given extensions exists in directory."""
-    for ext in extensions:
-        try:
-            next(directory.rglob(f"*{ext}"))
-            return True
-        except StopIteration:
-            continue
-    return False
+def _detect_extensions(directory: Path, extensions: set[str]) -> set[str]:
+    """
+    Walk `directory` once and return the subset of `extensions` that appear.
+
+    The previous implementation did one full rglob per extension; on a large
+    repo with many extensions to test (`.py`, `.go`, `.js`, `.ts`, `.jsx`,
+    `.tsx`, `.mjs`, …) that meant several full traversals back-to-back. A
+    single os.walk + early-exit-when-all-found is dramatically cheaper.
+    """
+    found: set[str] = set()
+    target_count = len(extensions)
+    if target_count == 0:
+        return found
+    # Skip directories that never contain interesting source code and inflate
+    # walk time on real repos (node_modules in particular can be huge).
+    skip_dirs = {".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build"}
+    for root, dirnames, filenames in os.walk(directory):
+        dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+        for name in filenames:
+            dot = name.rfind(".")
+            if dot == -1:
+                continue
+            ext = name[dot:].lower()
+            if ext in extensions:
+                found.add(ext)
+                if len(found) == target_count:
+                    return found
+    return found
 
 
 def _run_tool(name: str, runner_fn, parser_fn, *args) -> tuple[list[dict], str | None]:
@@ -125,14 +147,21 @@ def run_sast_scan(self, job_id: str) -> dict:
             raise ValueError(f"Unknown target_type: {target_type!r}")
 
         # ── Detect project type ───────────────────────────────────────────────
-        has_python   = _has_ext(source_dir, ".py", ".pyw")
-        has_go       = _has_ext(source_dir, ".go")
-        has_js_ts    = _has_ext(source_dir, ".js", ".ts", ".jsx", ".tsx", ".mjs")
+        # One walk for all extension probes, then cheap O(1) set lookups.
+        ext_present = _detect_extensions(
+            source_dir,
+            {".py", ".pyw", ".go", ".js", ".ts", ".jsx", ".tsx", ".mjs"},
+        )
+        has_python   = bool(ext_present & {".py", ".pyw"})
+        has_go       = ".go" in ext_present
+        has_js_ts    = bool(ext_present & {".js", ".ts", ".jsx", ".tsx", ".mjs"})
         has_pkg_json = (source_dir / "package.json").exists()
+        # `requirements*.txt` may live anywhere; one quick generator + early
+        # bool() short-circuits on the first match.
         has_py_deps  = (
-            bool(list(source_dir.rglob("requirements*.txt"))[:1])
-            or (source_dir / "pyproject.toml").exists()
+            (source_dir / "pyproject.toml").exists()
             or (source_dir / "Pipfile").exists()
+            or any(True for _ in source_dir.rglob("requirements*.txt"))
         )
 
         log.info(
@@ -205,30 +234,36 @@ def run_sast_scan(self, job_id: str) -> dict:
         )
 
         # ── Persist ───────────────────────────────────────────────────────────
-        # bulk_save_objects is meaningfully faster than add() in a loop for the
-        # large-finding case (semgrep on a big repo can produce thousands).
+        # Use SQLAlchemy 2.0 Core insert with executemany — measurably faster
+        # than bulk_save_objects() because it skips per-row ORM construction
+        # and lets the driver batch in a single round-trip. We also chunk so
+        # one giant scan doesn't hit MySQL max_allowed_packet.
+        BULK_CHUNK = 500
         with db_session() as db:
-            findings_to_persist = [
-                ScanFinding(
-                    id=f["id"],
-                    scan_job_id=job_id,
-                    tool=f["tool"],
-                    rule_id=f["rule_id"],
-                    severity=f["severity"],
-                    confidence=f.get("confidence"),
-                    title=f["title"],
-                    message=f["message"],
-                    file_path=f["file_path"],
-                    line_start=f.get("line_start"),
-                    line_end=f.get("line_end"),
-                    code_snippet=f.get("code_snippet"),
-                    cwe=f.get("cwe"),
-                    owasp=f.get("owasp"),
-                    fingerprint=f["fingerprint"],
-                )
-                for f in unique_findings
-            ]
-            db.bulk_save_objects(findings_to_persist)
+            if unique_findings:
+                rows = [
+                    {
+                        "id": f["id"],
+                        "scan_job_id": job_id,
+                        "tool": f["tool"],
+                        "rule_id": f["rule_id"],
+                        "severity": f["severity"],
+                        "confidence": f.get("confidence"),
+                        "title": f["title"],
+                        "message": f["message"],
+                        "file_path": f["file_path"],
+                        "line_start": f.get("line_start"),
+                        "line_end": f.get("line_end"),
+                        "code_snippet": f.get("code_snippet"),
+                        "cwe": f.get("cwe"),
+                        "owasp": f.get("owasp"),
+                        "fingerprint": f["fingerprint"],
+                    }
+                    for f in unique_findings
+                ]
+                stmt = insert(ScanFinding)
+                for i in range(0, len(rows), BULK_CHUNK):
+                    db.execute(stmt, rows[i : i + BULK_CHUNK])
 
             job = db.query(ScanJob).filter(ScanJob.id == job_id).first()
             job.status         = "completed"

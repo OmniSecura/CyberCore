@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from celery import Celery
 from fastapi import HTTPException, status, UploadFile
-from sqlalchemy import func
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from ..database.models.ScanJob import ScanJob
@@ -54,17 +54,26 @@ class ScanService:
           • Scans created in the last 24 h cannot exceed FREE_PLAN_DAILY_LIMIT.
         Both keep an attacker (or a buggy frontend) from bypassing the UI cap
         by hitting the API directly.
+
+        Implemented as a single query with conditional aggregation so submit
+        only pays one round-trip to MySQL.
         """
-        active = (
-            self.db.query(func.count(ScanJob.id))
-            .filter(
-                ScanJob.organization_id == organization_id,
-                ScanJob.deleted_at.is_(None),
-                ScanJob.status.in_(("queued", "running")),
-            )
-            .scalar()
-        ) or 0
-        if active >= FREE_PLAN_ACTIVE_LIMIT:
+        since = datetime.now(tz=timezone.utc) - timedelta(hours=24)
+        active_count, daily_count = self.db.query(
+            func.coalesce(
+                func.sum(case((ScanJob.status.in_(("queued", "running")), 1), else_=0)),
+                0,
+            ),
+            func.coalesce(
+                func.sum(case((ScanJob.created_at >= since, 1), else_=0)),
+                0,
+            ),
+        ).filter(
+            ScanJob.organization_id == organization_id,
+            ScanJob.deleted_at.is_(None),
+        ).one()
+
+        if (active_count or 0) >= FREE_PLAN_ACTIVE_LIMIT:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail=(
@@ -72,18 +81,7 @@ class ScanService:
                     "Wait for a running scan to finish or cancel one."
                 ),
             )
-
-        since = datetime.now(tz=timezone.utc) - timedelta(hours=24)
-        daily = (
-            self.db.query(func.count(ScanJob.id))
-            .filter(
-                ScanJob.organization_id == organization_id,
-                ScanJob.deleted_at.is_(None),
-                ScanJob.created_at >= since,
-            )
-            .scalar()
-        ) or 0
-        if daily >= FREE_PLAN_DAILY_LIMIT:
+        if (daily_count or 0) >= FREE_PLAN_DAILY_LIMIT:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail=(
@@ -114,7 +112,7 @@ class ScanService:
         )
         self.db.add(job)
         self.db.commit()
-        self.db.refresh(job)
+        self.db.refresh(job)  # populate server-side defaults (timestamps, etc.)
 
         task = _celery.send_task(
             "scan_worker.tasks.sast.run_sast_scan",
@@ -123,7 +121,8 @@ class ScanService:
         )
         job.celery_task_id = task.id
         self.db.commit()
-        self.db.refresh(job)
+        # No second refresh — `expire_on_commit=False` keeps `job` populated and
+        # we just assigned celery_task_id locally.
         return job
 
     async def submit_upload_scan(
@@ -194,7 +193,7 @@ class ScanService:
         )
         self.db.add(job)
         self.db.commit()
-        self.db.refresh(job)
+        self.db.refresh(job)  # populate server-side defaults (timestamps, etc.)
 
         task = _celery.send_task(
             "scan_worker.tasks.sast.run_sast_scan",
@@ -203,7 +202,6 @@ class ScanService:
         )
         job.celery_task_id = task.id
         self.db.commit()
-        self.db.refresh(job)
         return job
 
     # ── Read ───────────────────────────────────────────────────────────────────
@@ -228,6 +226,29 @@ class ScanService:
         total = q.count()
         items = q.order_by(ScanJob.created_at.desc()).offset(offset).limit(limit).all()
         return total, items
+
+    def get_status_counts(self, organization_id: str) -> dict[str, int]:
+        """
+        One-query count of jobs per status for an organization.
+
+        Replaces the previous frontend pattern of issuing three list() calls
+        (one for the page + one each for queued/running counts), each of which
+        triggered the full auth + org-privilege + org-resolve chain.
+        """
+        rows = (
+            self.db.query(ScanJob.status, func.count(ScanJob.id))
+            .filter(
+                ScanJob.organization_id == organization_id,
+                ScanJob.deleted_at.is_(None),
+            )
+            .group_by(ScanJob.status)
+            .all()
+        )
+        counts = {s: 0 for s in ("queued", "running", "completed", "failed", "cancelled")}
+        for st, n in rows:
+            counts[st] = n
+        counts["total"] = sum(counts.values())
+        return counts
 
     def get_job(self, organization_id: str, job_id: str) -> ScanJob:
         job = (
@@ -294,7 +315,6 @@ class ScanService:
         job.status = "cancelled"
         job.completed_at = datetime.now(tz=timezone.utc)
         self.db.commit()
-        self.db.refresh(job)
         return job
 
     # ── Delete ─────────────────────────────────────────────────────────────────
