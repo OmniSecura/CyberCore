@@ -212,3 +212,6 @@ __marimo__/
 .claude
 /manual
 /documentation
+
+# Production config — contains domain/credentials, never commit
+Caddyfile

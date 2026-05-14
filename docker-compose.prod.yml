@@ -1,0 +1,53 @@
+# ══════════════════════════════════════════════════════════════════════════════
+#  Produkcja — nakładka na docker-compose.yml
+#  Uruchamiaj tak:
+#    docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+#  Co zmienia względem dev:
+#  - Usuwa wszystkie porty dostępne z zewnątrz (DB, Redis, serwisy backendowe)
+#  - Dodaje Caddy jako reverse proxy z automatycznym HTTPS (Let's Encrypt)
+#  - Dashboard nie jest wystawiony bezpośrednio — Caddy do niego proxy-uje
+# ══════════════════════════════════════════════════════════════════════════════
+
+services:
+
+  # Usuń publiczne porty z infrastruktury
+  db:
+    ports: !reset []
+
+  redis:
+    ports: !reset []
+
+  # Usuń publiczne porty z serwisów backendowych
+  auth:
+    ports: !reset []
+
+  org:
+    ports: !reset []
+
+  scan:
+    ports: !reset []
+
+  # Dashboard — bez bezpośredniego portu, Caddy robi proxy
+  dashboard:
+    ports: !reset []
+
+  # Caddy — jedyna brama do świata (80 + 443)
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    networks: [cybercore_net]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data          # certyfikaty Let's Encrypt
+      - caddy_config:/config
+      - /var/log/caddy:/var/log/caddy
+    depends_on:
+      - dashboard
+
+volumes:
+  caddy_data:
+  caddy_config:

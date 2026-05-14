@@ -1,0 +1,19 @@
+domain.com {
+
+    # Optional: basicauth
+    # to generate pass
+    #   docker run --rm caddy:2-alpine caddy hash-password --plaintext "Pass"
+    #
+    # basicauth {
+    #     uzytkownik1 $2a$14$HASH
+    #     uzytkownik2 $2a$14$OTHER_HASH
+    # }
+
+    # Serve dashboard (nginx) and proxy API
+    reverse_proxy dashboard:80
+
+    # Logi
+    log {
+        output file /var/log/caddy/access.log
+    }
+}
