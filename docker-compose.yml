@@ -145,6 +145,7 @@ services:
       MAIL_FROM: ${MAIL_FROM:-}
       MAIL_FROM_NAME: ${MAIL_FROM_NAME:-CyberCore}
       APP_URL: ${APP_URL:-http://localhost}
+      MAX_FREE_ORGS_PER_OWNER: ${MAX_FREE_ORGS_PER_OWNER:-3}
     ports:
       - "8081:8081"
     healthcheck:

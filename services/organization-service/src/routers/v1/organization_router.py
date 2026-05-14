@@ -171,7 +171,7 @@ class OrganizationRouter:
         except PermissionError as e:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
         except ValueError as e:
-            raise HTTPException(status_code=status.HTTP_410_GONE, detail=str(e))
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
     # ── Reactivate ────────────────────────────────────────────────────────────
     # User must provide a new slug if the original one was taken after deletion.

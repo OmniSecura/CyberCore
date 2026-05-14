@@ -10,6 +10,7 @@ from ..database.models.Organization import Organization
 from ..database.models.OrganizationOwnershipTransfer import OrganizationOwnershipTransfer
 from ..database.models.OrganizationUsers import OrganizationUser
 from ..database.models.User import User
+from ..global_settings import MAX_FREE_ORGS_PER_OWNER
 from ..schemas.organization import CreateOrganizationRequest, UpdateOrganizationRequest
 from ..utils.email_client import OrgEmailClient
 
@@ -119,6 +120,21 @@ class OrgService:
         )
         return member.role if member else "viewer"
 
+    def count_owned_free_orgs(self, user_id: str) -> int:
+        """Active (not soft-deleted) free-plan orgs owned by user. Soft-deleted
+        orgs are excluded so users can't be permanently locked out by orgs they
+        already deleted."""
+        return (
+            self.db.query(Organization)
+            .filter(
+                Organization.owner_id == user_id,
+                Organization.plan == "free",
+                Organization.deleted_at.is_(None),
+                Organization.is_active == True,
+            )
+            .count()
+        )
+
     def count_org_members(self, org_id: str) -> int:
         """Member count = OrganizationUser rows + 1 (for the owner)."""
         members = (
@@ -175,6 +191,18 @@ class OrgService:
         new_owner = self.db.query(User).filter(User.id == new_owner_id).first()
         if not new_owner:
             raise LookupError("New owner user not found")
+
+        # Free-plan cap on the recipient — fail fast so we don't email someone
+        # who'd be blocked at accept-time anyway. The same check runs at accept-time
+        # to cover state changes between initiate and accept.
+        if (
+            org.plan == "free"
+            and self.count_owned_free_orgs(new_owner_id) >= MAX_FREE_ORGS_PER_OWNER
+        ):
+            raise ValueError(
+                f"Recipient already owns the maximum of {MAX_FREE_ORGS_PER_OWNER} "
+                f"free-plan organizations"
+            )
 
         # Cancel any existing pending transfer for this org
         existing = (
@@ -238,6 +266,17 @@ class OrgService:
         org = self.get_by_id(transfer.organization_id)
         if not org:
             raise LookupError("Organization not found")
+
+        # Re-check the recipient's free-plan cap — state may have changed since
+        # the transfer was initiated (recipient created/accepted other free orgs).
+        if (
+            org.plan == "free"
+            and self.count_owned_free_orgs(user_id) >= MAX_FREE_ORGS_PER_OWNER
+        ):
+            raise ValueError(
+                f"You already own the maximum of {MAX_FREE_ORGS_PER_OWNER} "
+                f"free-plan organizations"
+            )
 
         prev_owner_id = org.owner_id
 
@@ -305,6 +344,13 @@ class OrgService:
         if self.get_by_slug(data.organization_slug):
             raise ValueError(
                 f"Slug '{data.organization_slug}' is already taken"
+            )
+
+        # New orgs default to the free plan — enforce the per-owner free-plan cap.
+        if self.count_owned_free_orgs(creator_id) >= MAX_FREE_ORGS_PER_OWNER:
+            raise ValueError(
+                f"You already own the maximum of {MAX_FREE_ORGS_PER_OWNER} "
+                f"free-plan organizations"
             )
 
         org = Organization(
