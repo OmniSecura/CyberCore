@@ -108,6 +108,7 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       MAIL_FROM: ${MAIL_FROM:-}
       MAIL_FROM_NAME: ${MAIL_FROM_NAME:-CyberCore}
+      APP_URL: ${APP_URL:-http://localhost}
       # CORS — dashboard container is named 'dashboard' and served on port 80
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:80,http://localhost:3000}
       DB_CREATE_TABLES: "true"
