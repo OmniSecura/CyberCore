@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CyberCore Docs — Organization Service</title>
+  <link rel="stylesheet" href="assets/style.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css"/>
+</head>
+<body>
+
+<header class="site-header">
+  <button class="hamburger" id="hamburger" aria-label="Toggle navigation">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+      <rect y="3" width="20" height="2" rx="1"/><rect y="9" width="20" height="2" rx="1"/><rect y="15" width="20" height="2" rx="1"/>
+    </svg>
+  </button>
+  <div class="logo">🛡️ Cyber<span>Core</span> <span class="version">v0.1.0</span></div>
+  <nav>
+    <a href="https://github.com/yourname/cybercore" target="_blank">GitHub</a>
+    <a href="getting-started.html">Quick Start</a>
+    <a href="api-organizations.html">API</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="sidebar"><div id="nav-container"></div></aside>
+
+  <main class="content">
+    <h1>Organization Service</h1>
+    <div class="page-meta">
+      <span class="badge green">FastAPI</span>
+      <span class="badge blue">MySQL</span>
+      <span class="badge gray">Port :8081</span>
+    </div>
+    <p class="lead">The organization-service manages multi-tenant boundaries. It handles
+    organizations, custom roles, fine-grained privileges, member management, and ownership
+    transfers. Every other service delegates access control checks here.</p>
+
+    <div class="toc">
+      <div class="toc-title">On this page</div>
+      <ul>
+        <li><a href="#concepts">Core Concepts</a></li>
+        <li><a href="#privileges">Privilege System</a></li>
+        <li><a href="#roles">Custom Roles</a></li>
+        <li><a href="#membership">Membership</a></li>
+        <li><a href="#ownership-transfer">Ownership Transfer</a></li>
+        <li><a href="#soft-delete">Soft Delete &amp; Reactivation</a></li>
+        <li><a href="#inter-service">Inter-service Usage</a></li>
+      </ul>
+    </div>
+
+    <h2 id="concepts">Core Concepts</h2>
+
+    <h3>Organization</h3>
+    <p>The top-level multi-tenant boundary. Every scan, log project, and alert is scoped to
+    an organization. An org has:</p>
+    <ul>
+      <li>A unique <strong>slug</strong> (URL-friendly, e.g. <code>my-company</code>)</li>
+      <li>A human-readable <strong>name</strong></li>
+      <li>One <strong>Owner</strong> (the creator; can be transferred)</li>
+      <li>Zero or more <strong>Members</strong>, each assigned a Role</li>
+      <li>Zero or more custom <strong>Roles</strong>, each with a set of Privileges</li>
+    </ul>
+
+    <h3>Slug</h3>
+    <p>The slug appears in every API URL that is org-scoped:
+    <code>/api/v1/scans/organizations/<strong>my-company</strong>/scans</code>.
+    Slugs must be globally unique, URL-safe, and lowercase. When an org is soft-deleted,
+    its slug is freed for others to claim.</p>
+
+    <h3>Owner</h3>
+    <p>The Owner is a special built-in role with all privileges. There is always exactly one
+    Owner per org. The Owner cannot be removed by regular role assignment — ownership must
+    be transferred explicitly via the two-step transfer flow.</p>
+
+    <h2 id="privileges">Privilege System</h2>
+    <p>Privileges are named strings that represent specific actions. They are grouped into
+    categories for the UI. Each service defines which privileges it checks.</p>
+
+    <h3>Current privilege strings</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Privilege</th><th>Checked by</th><th>Allows</th></tr></thead>
+        <tbody>
+          <tr><td><code>scans.run</code></td><td>scan-service</td><td>Submit new scans</td></tr>
+          <tr><td><code>scans.view</code></td><td>scan-service</td><td>View scan list, details, and findings</td></tr>
+          <tr><td><code>scans.manage</code></td><td>scan-service</td><td>Cancel and delete scans</td></tr>
+          <tr><td><code>members.view</code></td><td>org-service</td><td>List org members</td></tr>
+          <tr><td><code>members.invite</code></td><td>org-service</td><td>Invite new members</td></tr>
+          <tr><td><code>members.remove</code></td><td>org-service</td><td>Remove members</td></tr>
+          <tr><td><code>roles.view</code></td><td>org-service</td><td>List roles and their privileges</td></tr>
+          <tr><td><code>roles.manage</code></td><td>org-service</td><td>Create, edit, delete custom roles</td></tr>
+          <tr><td><code>org.settings</code></td><td>org-service</td><td>Update org name, slug, settings</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Checking privileges from another service</h3>
+    <pre><code class="language-bash"># Get the set of privileges the current user holds in org "my-company"
+GET /api/v1/organizations/roles/my-company/my-privileges
+
+# Response:
+{
+  "privileges": ["scans.run", "scans.view", "scans.manage", "members.view"]
+}</code></pre>
+    <p>This endpoint is called by scan-service on every protected request
+    (with a 10-second TTL cache). An empty privilege set means the user is not
+    a member of the org — return 403, not 404.</p>
+
+    <h2 id="roles">Custom Roles</h2>
+    <p>Org admins can create roles beyond the built-in Owner role. A role has:</p>
+    <ul>
+      <li><strong>name</strong> — displayed in the UI</li>
+      <li><strong>description</strong> — optional human-readable explanation</li>
+      <li><strong>color</strong> — hex color for the UI badge</li>
+      <li><strong>privileges</strong> — the set of privilege strings this role grants</li>
+    </ul>
+
+    <h3>Example: Creating a "Security Analyst" role</h3>
+    <pre><code class="language-json">POST /api/v1/organizations/roles/my-company
+{
+  "name": "Security Analyst",
+  "description": "Can run and view scans but cannot manage them",
+  "color": "#3fb950",
+  "privileges": ["scans.run", "scans.view", "members.view"]
+}</code></pre>
+    <p>The creator must hold <code>roles.manage</code> privilege in the org. Roles require
+    <code>roles.view</code> to list. Roles cannot be assigned privileges the creator doesn't
+    themselves hold (privilege escalation prevention).</p>
+
+    <h2 id="membership">Membership</h2>
+    <p>Members are users (identified by UUID from auth-service) associated with an org via a
+    role. A user can be a member of multiple orgs with different roles.</p>
+
+    <h3>Invite flow</h3>
+    <ol>
+      <li>Actor with <code>members.invite</code> calls <code>POST /organizations/{slug}/members/invite</code>
+      with the invitee's email and the role to assign.</li>
+      <li>An email with an invite link is sent to the invitee.</li>
+      <li>The invitee accepts via <code>POST /invites/accept</code> with the token from the email.</li>
+      <li>If the invitee has no account, they are prompted to register first.</li>
+    </ol>
+
+    <h3>Removing a member</h3>
+    <p>Requires <code>members.remove</code> privilege. Owners cannot be removed via the member
+    endpoint — transfer ownership first.</p>
+
+    <h2 id="ownership-transfer">Ownership Transfer</h2>
+    <p>A two-step process to prevent accidental ownership loss:</p>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h3>Owner initiates transfer</h3>
+          <pre><code class="language-bash">PATCH /api/v1/organizations/my-company/transfer-ownership
+{ "new_owner_id": "uuid-of-recipient" }</code></pre>
+          <p>The recipient must already be a member of the org. An email with an acceptance
+          link is sent. The current owner retains ownership until the recipient accepts.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h3>Recipient accepts</h3>
+          <pre><code class="language-bash">POST /api/v1/organizations/transfer-ownership/accept
+{ "token": "TOKEN_FROM_EMAIL" }</code></pre>
+          <p>The token is single-use and expires. If it expires, the current owner must
+          initiate again. Upon acceptance, the previous owner's role is changed to a
+          regular member role.</p>
+        </div>
+      </div>
+    </div>
+
+    <h2 id="soft-delete">Soft Delete &amp; Reactivation</h2>
+    <p>Deleting an org sets <code>deleted_at = now()</code> and frees the slug. The org's
+    data (scan history, member list) is preserved. Only the Owner can delete their org.</p>
+
+    <h3>Reactivation</h3>
+    <pre><code class="language-bash">POST /api/v1/organizations/{org_id}/reactivate
+{ "new_slug": "my-company-v2" }   # optional: only needed if original slug was taken</code></pre>
+    <p>Only the original Owner can reactivate. If the original slug is still available,
+    <code>new_slug</code> is optional. If taken, a new slug must be provided (returns 409
+    if the new slug is also taken).</p>
+
+    <h2 id="inter-service">Inter-service Usage</h2>
+    <p>Other services interact with org-service in two ways:</p>
+
+    <h3>1. Get org UUID from slug</h3>
+    <pre><code class="language-bash">GET /api/v1/organizations/{slug}
+# Returns the full org object including the UUID (id field)
+# Used by scan-service to resolve slug → UUID for the scan_jobs.organization_id column</code></pre>
+
+    <h3>2. Check user's privileges</h3>
+    <pre><code class="language-bash">GET /api/v1/organizations/roles/{slug}/my-privileges
+# Returns { "privileges": ["scans.run", ...] }
+# Cookies forwarded from the original user request
+# Called by scan-service before every protected action</code></pre>
+
+    <div class="callout info">
+      <div class="callout-title">Forward cookies, not tokens</div>
+      <p>Services forward the user's original cookies when calling org-service and auth-service.
+      They do not extract the JWT, decode it, and re-authenticate — the cookie is the credential.
+      This keeps the auth surface narrow: only auth-service validates JWTs.</p>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+<script src="assets/nav.js"></script>
+</body>
+</html>

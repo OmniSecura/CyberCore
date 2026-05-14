@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CyberCore Docs — Contributing</title>
+  <link rel="stylesheet" href="assets/style.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css"/>
+</head>
+<body>
+
+<header class="site-header">
+  <button class="hamburger" id="hamburger" aria-label="Toggle navigation">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+      <rect y="3" width="20" height="2" rx="1"/><rect y="9" width="20" height="2" rx="1"/><rect y="15" width="20" height="2" rx="1"/>
+    </svg>
+  </button>
+  <div class="logo">🛡️ Cyber<span>Core</span> <span class="version">v0.1.0</span></div>
+  <nav>
+    <a href="https://github.com/yourname/cybercore" target="_blank">GitHub</a>
+    <a href="getting-started.html">Quick Start</a>
+    <a href="api-auth.html">API</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="sidebar"><div id="nav-container"></div></aside>
+
+  <main class="content">
+    <h1>Contributing</h1>
+    <p class="lead">CyberCore is open source and welcomes contributions. This guide covers
+    the workflow, code style, how to add a new scanning tool, and how to report security vulnerabilities.</p>
+
+    <div class="toc">
+      <div class="toc-title">On this page</div>
+      <ul>
+        <li><a href="#workflow">Contribution Workflow</a></li>
+        <li><a href="#code-style">Code Style</a></li>
+        <li><a href="#commit-messages">Commit Messages</a></li>
+        <li><a href="#adding-docs">Adding Documentation Pages</a></li>
+        <li><a href="#adding-scanner">Adding a New Scanner Tool</a></li>
+        <li><a href="#security">Security Vulnerabilities</a></li>
+      </ul>
+    </div>
+
+    <h2 id="workflow">Contribution Workflow</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h3>Fork &amp; clone</h3>
+          <pre><code class="language-bash">git clone https://github.com/YOUR_USERNAME/cybercore.git
+cd cybercore
+git remote add upstream https://github.com/ORIGINAL/cybercore.git</code></pre>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h3>Create a feature branch</h3>
+          <pre><code class="language-bash">git checkout -b feat/my-feature   # new feature
+git checkout -b fix/broken-thing  # bug fix
+git checkout -b docs/update-api   # documentation</code></pre>
+          <p>Branch naming: <code>feat/</code>, <code>fix/</code>, <code>docs/</code>,
+          <code>refactor/</code>, <code>perf/</code>, <code>test/</code>, <code>chore/</code>.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <h3>Make your changes</h3>
+          <p>Keep each PR focused on a single concern. Mixing unrelated changes makes
+          review harder and increases the chance of regressions.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <h3>Test locally</h3>
+          <pre><code class="language-bash"># Quick syntax check (no pytest yet)
+python -m py_compile services/scan-service/src/**/*.py
+python -m py_compile workers/scan-worker/src/**/*.py</code></pre>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">5</div>
+        <div class="step-body">
+          <h3>Open a pull request</h3>
+          <p>Target branch: <code>main</code>. Describe:</p>
+          <ul>
+            <li>What the change does</li>
+            <li>Why it's needed (link the issue if one exists)</li>
+            <li>How to test it</li>
+            <li>Any breaking changes</li>
+          </ul>
+          <p>Security-related PRs go through an additional review pass.
+          Mention <code>[security]</code> in the title.</p>
+        </div>
+      </div>
+    </div>
+
+    <h2 id="code-style">Code Style</h2>
+    <h3>Python (all backend services + worker)</h3>
+    <ul>
+      <li>Formatter: <strong>Black</strong> (line length 100). Run <code>black .</code> before committing.</li>
+      <li>Imports: <strong>isort</strong> with Black profile. <code>isort --profile black .</code></li>
+      <li>Type hints: required on all public functions and service methods. Use <code>str | None</code> syntax (Python 3.10+).</li>
+      <li>Docstrings: short module-level docstrings on new files. Function docstrings for non-obvious logic only.</li>
+      <li>Prefer explicit over clever. A clear if/else is better than a one-liner that requires a comment to understand.</li>
+    </ul>
+
+    <h3>SQLAlchemy</h3>
+    <ul>
+      <li>Use SQLAlchemy 2.0 <code>Mapped</code> + <code>mapped_column</code> style (not the legacy Column API).</li>
+      <li>Bulk inserts: use <code>db.execute(insert(Model), rows)</code>, not <code>db.add()</code> in a loop.</li>
+      <li>No lazy loading across service boundaries. If you need related objects, eager-load them in the same query.</li>
+    </ul>
+
+    <h3>FastAPI</h3>
+    <ul>
+      <li>Use <code>Depends()</code> for all cross-cutting concerns (auth, DB sessions, service instances).</li>
+      <li>Never put business logic in route functions — route functions delegate to service classes.</li>
+      <li>All route functions must have explicit <code>response_model</code> or <code>status_code</code>.</li>
+    </ul>
+
+    <h3>JavaScript / React</h3>
+    <ul>
+      <li>ESModules only (<code>"type": "module"</code> in package.json).</li>
+      <li>Functional components with hooks. No class components.</li>
+      <li>Keep components focused; split at ~150 lines.</li>
+    </ul>
+
+    <h2 id="commit-messages">Commit Messages</h2>
+    <p>Use <a href="https://www.conventionalcommits.org" target="_blank">Conventional Commits</a>:</p>
+    <pre><code class="language-text">&lt;type&gt;(&lt;scope&gt;): &lt;short description&gt;
+
+[optional body — why, not what]
+
+[optional footer: BREAKING CHANGE: ..., Closes #123]</code></pre>
+
+    <h3>Types</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Type</th><th>When to use</th></tr></thead>
+        <tbody>
+          <tr><td><code>feat</code></td><td>New feature</td></tr>
+          <tr><td><code>fix</code></td><td>Bug fix</td></tr>
+          <tr><td><code>perf</code></td><td>Performance improvement</td></tr>
+          <tr><td><code>refactor</code></td><td>Code change that doesn't fix a bug or add a feature</td></tr>
+          <tr><td><code>docs</code></td><td>Documentation only</td></tr>
+          <tr><td><code>test</code></td><td>Adding or updating tests</td></tr>
+          <tr><td><code>chore</code></td><td>Dependencies, config, CI</td></tr>
+          <tr><td><code>security</code></td><td>Security fixes (use instead of fix for CVEs/vulns)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Examples</h3>
+    <pre><code class="language-text">feat(scan-service): add scan status stats endpoint
+fix(auth): reset failed_login_attempts on successful login
+security(worker): validate git URL scheme before clone (RCE prevention)
+perf(scan-service): replace 3 COUNT queries with single GROUP BY
+docs: add architecture page to documentation site</code></pre>
+
+    <h2 id="adding-docs">Adding Documentation Pages</h2>
+    <p>The documentation site is static HTML — no build step required. To add a new page:</p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h3>Copy the template</h3>
+          <pre><code class="language-bash">cp documentation/_template.html documentation/my-new-page.html</code></pre>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h3>Add the page to nav.js</h3>
+          <p>Open <code>documentation/assets/nav.js</code> and add your page to the
+          <code>NAV_ITEMS</code> array:</p>
+          <pre><code class="language-javascript">// In the appropriate section:
+{ label: "My New Page", href: "my-new-page.html" }</code></pre>
+          <p>The nav updates everywhere automatically — no other file changes needed.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <h3>Write your content</h3>
+          <p>Fill in the <code>&lt;h1&gt;</code>, <code>&lt;p class="lead"&gt;</code>, and content sections.
+          Use the shared CSS classes documented in the template.</p>
+        </div>
+      </div>
+    </div>
+
+    <h2 id="adding-scanner">Adding a New Scanner Tool</h2>
+    <p>To integrate a new SAST tool into the worker pipeline:</p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h3>Write the runner</h3>
+          <p>Create <code>workers/scan-worker/src/runners/mytool_runner.py</code>:</p>
+          <pre><code class="language-python">"""MyTool runner — invokes the mytool binary and returns raw JSON output."""
+import subprocess
+from pathlib import Path
+
+
+def run(source_dir: Path) -> str:
+    """Run mytool and return the raw JSON string."""
+    result = subprocess.run(
+        ["mytool", "--format", "json", str(source_dir)],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    # Exit code 1 typically means "findings found" — not an error.
+    # Exit code 2+ is a tool error.
+    if result.returncode >= 2:
+        raise RuntimeError(f"mytool exited with {result.returncode}: {result.stderr.strip()}")
+    return result.stdout</code></pre>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h3>Write the parser</h3>
+          <p>Create <code>workers/scan-worker/src/parsers/mytool_parser.py</code>:</p>
+          <pre><code class="language-python">"""MyTool parser — converts raw tool output into the CyberCore finding format."""
+import hashlib
+import json
+import uuid
+from pathlib import Path
+
+
+def parse(raw: str, source_dir: Path) -> list[dict]:
+    if not raw.strip():
+        return []
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+
+    findings = []
+    for item in data.get("results", []):
+        file_path = item.get("file", "")
+        line      = item.get("line")
+        rule_id   = item.get("rule_id", "unknown")
+
+        fingerprint = hashlib.sha256(
+            f"mytool:{rule_id}:{file_path}:{line}".encode()
+        ).hexdigest()
+
+        findings.append({
+            "id":          str(uuid.uuid4()),
+            "tool":        "mytool",
+            "rule_id":     rule_id,
+            "severity":    _map_severity(item.get("severity", "medium")),
+            "confidence":  None,
+            "title":       item.get("message", ""),
+            "message":     item.get("description", ""),
+            "file_path":   str(Path(file_path).relative_to(source_dir)) if file_path else "",
+            "line_start":  line,
+            "line_end":    line,
+            "code_snippet": item.get("code"),
+            "cwe":         item.get("cwe"),
+            "owasp":       None,
+            "fingerprint": fingerprint,
+        })
+    return findings
+
+
+def _map_severity(raw: str) -> str:
+    return {"CRITICAL": "critical", "HIGH": "high", "MEDIUM": "medium",
+            "LOW": "low", "INFO": "info"}.get(raw.upper(), "medium")</code></pre>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <h3>Register in the task</h3>
+          <p>Edit <code>workers/scan-worker/src/tasks/sast.py</code>:</p>
+          <pre><code class="language-python">from ..runners import mytool_runner   # add to imports
+from ..parsers import mytool_parser   # add to imports
+
+# In run_sast_scan(), inside the "Run tools" section:
+collect("mytool", mytool_runner.run, mytool_parser.parse, source_dir)
+
+# Or conditionally:
+if has_go:   # only for Go projects
+    collect("mytool", mytool_runner.run, mytool_parser.parse, source_dir)</code></pre>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <h3>Update the documentation</h3>
+          <p>Add the new tool to the tools table in
+          <a href="workers-sast.html">SAST Worker docs</a> and the README.</p>
+        </div>
+      </div>
+    </div>
+
+    <h2 id="security">Security Vulnerabilities</h2>
+    <div class="callout danger">
+      <div class="callout-title">Do NOT open a public GitHub issue for security bugs</div>
+      <p>If you find a vulnerability in CyberCore itself, please report it privately.
+      Public disclosure before a patch is ready puts all users at risk.</p>
+    </div>
+    <p>Report security vulnerabilities by email to: <code>security@cybercore.dev</code>
+    (update with your actual contact).</p>
+    <p>Please include:</p>
+    <ul>
+      <li>Description of the vulnerability</li>
+      <li>Steps to reproduce</li>
+      <li>Affected versions</li>
+      <li>Potential impact</li>
+      <li>Suggested fix (optional but appreciated)</li>
+    </ul>
+    <p>We aim to respond within <strong>48 hours</strong> and will credit responsible disclosure
+    in the changelog.</p>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-javascript.min.js"></script>
+<script src="assets/nav.js"></script>
+</body>
+</html>

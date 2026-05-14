@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CyberCore Docs — Architecture</title>
+  <link rel="stylesheet" href="assets/style.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css"/>
+</head>
+<body>
+
+<header class="site-header">
+  <button class="hamburger" id="hamburger" aria-label="Toggle navigation">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+      <rect y="3" width="20" height="2" rx="1"/><rect y="9" width="20" height="2" rx="1"/><rect y="15" width="20" height="2" rx="1"/>
+    </svg>
+  </button>
+  <div class="logo">🛡️ Cyber<span>Core</span> <span class="version">v0.1.0</span></div>
+  <nav>
+    <a href="https://github.com/yourname/cybercore" target="_blank">GitHub</a>
+    <a href="getting-started.html">Quick Start</a>
+    <a href="api-auth.html">API</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="sidebar"><div id="nav-container"></div></aside>
+
+  <main class="content">
+    <h1>Architecture</h1>
+    <p class="lead">CyberCore is a microservices platform. Each service owns its own database
+    tables, communicates via HTTP, and can be deployed independently. This page explains the
+    boundaries, data flows, and key design decisions.</p>
+
+    <div class="toc">
+      <div class="toc-title">On this page</div>
+      <ul>
+        <li><a href="#overview">System Overview</a></li>
+        <li><a href="#service-boundaries">Service Boundaries</a></li>
+        <li><a href="#request-lifecycle">Request Lifecycle</a></li>
+        <li><a href="#scan-pipeline">Scan Pipeline</a></li>
+        <li><a href="#auth-flow">Authentication Flow</a></li>
+        <li><a href="#data-flow">Data Flow</a></li>
+        <li><a href="#design-decisions">Design Decisions</a></li>
+      </ul>
+    </div>
+
+    <h2 id="overview">System Overview</h2>
+    <pre><code class="language-text">┌─────────────────────────────────────────────────────────────────┐
+│                         Browser                                  │
+│                 React SPA — localhost:3000                        │
+└───────────────────────────┬────────────────────────────────────┘
+                            │ HTTP (Vite proxy in dev)
+          ┌─────────────────┼──────────────────────┐
+          │                 │                       │
+          ▼                 ▼                       ▼
+  ┌──────────────┐  ┌──────────────┐  ┌───────────────────┐
+  │ auth-service │  │  org-service │  │   scan-service    │
+  │   :8000      │  │   :8081      │  │      :8082        │
+  │              │  │              │  │                   │
+  │ FastAPI      │  │ FastAPI      │  │ FastAPI           │
+  └──────┬───────┘  └──────┬───────┘  └──────┬───────────┘
+         │                 │                  │
+         ▼                 ▼                  ▼
+  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+  │  MySQL       │  │  MySQL       │  │  MySQL       │
+  │  (users,     │  │  (orgs,      │  │  (scan_jobs, │
+  │  user_tokens)│  │  roles,      │  │  findings)   │
+  └──────────────┘  │  members)    │  └──────────────┘
+                    └──────────────┘          │
+                                              │ Celery task
+  ┌──────────────────────────────────────┐    ▼
+  │              Redis                   │  ┌──────────────┐
+  │  DB 0 — Celery broker + results      │  │ scan-worker  │
+  │  DB 1 — Auth token blacklist         │  │   (Celery)   │
+  └──────────────────────────────────────┘  │              │
+                                            │ Bandit       │
+                                            │ Semgrep      │
+                                            │ Gitleaks     │
+                                            │ Trivy        │
+                                            │ Hadolint     │
+                                            │ pip-audit    │
+                                            │ npm audit    │
+                                            │ gosec        │
+                                            └──────────────┘</code></pre>
+
+    <h2 id="service-boundaries">Service Boundaries</h2>
+
+    <h3>auth-service</h3>
+    <p>Sole owner of user identity. No other service writes to the <code>users</code> or
+    <code>user_tokens</code> tables. Other services call auth-service to validate cookies
+    and get the current user's UUID.</p>
+    <ul>
+      <li>Issues JWT access tokens (15 min) and refresh tokens (7 days) as httpOnly cookies</li>
+      <li><code>AutoRefreshMiddleware</code> silently renews the access token on every request when it's expired</li>
+      <li>Token revocation stored in <strong>Redis DB 1</strong> with TTL — survives service restarts</li>
+      <li>Brute-force protection: 5 failed attempts → 15-minute lockout</li>
+    </ul>
+
+    <h3>organization-service</h3>
+    <p>Multi-tenant boundary. Owns orgs, roles, privileges, and memberships. All role checks
+    in other services go through this service's <code>/roles/{slug}/my-privileges</code> endpoint.</p>
+    <ul>
+      <li>RBAC: each org has custom roles; each role has a set of named privileges</li>
+      <li>The creator of an org becomes its Owner (all privileges)</li>
+      <li>Two-step ownership transfer: owner initiates → email link → recipient accepts</li>
+      <li>Soft deletes on orgs (restored via <code>/reactivate</code>)</li>
+    </ul>
+
+    <h3>scan-service</h3>
+    <p>Orchestrates scan jobs. Accepts submissions, enforces quotas, dispatches Celery tasks,
+    and serves results. Does <strong>not</strong> run any scanning tools itself.</p>
+    <ul>
+      <li>Validates user identity by forwarding cookies to auth-service</li>
+      <li>Validates privileges by calling org-service</li>
+      <li>Both calls are TTL-cached (10 s for identity/privileges, 5 min for slug→UUID)</li>
+      <li>Persists <code>scan_jobs</code> and <code>scan_findings</code></li>
+    </ul>
+
+    <h3>scan-worker</h3>
+    <p>A Celery worker process — no HTTP API. Picks tasks from the Redis queue, runs the
+    security tools, deduplicates findings, and writes results back to MySQL.</p>
+
+    <h2 id="request-lifecycle">Authenticated Request Lifecycle</h2>
+    <p>Every protected API call on scan-service follows this path:</p>
+    <pre><code class="language-text">Client Request (with cookies)
+        │
+        ├─ 1. FastAPI dependency: get_current_user_id()
+        │      └─ Checks user_cache (10s TTL, SHA-256 keyed on cookies)
+        │         └─ Cache miss → POST auth-service/api/v1/users/me
+        │            └─ Returns user_id (UUID)
+        │
+        ├─ 2. FastAPI dependency: require_org_privilege("scans.run")
+        │      └─ Checks priv_cache (10s TTL, keyed on (cookie_hash, slug))
+        │         └─ Cache miss → GET org-service/.../my-privileges
+        │            └─ Returns frozenset of privilege strings
+        │
+        ├─ 3. Route resolves org slug → org UUID
+        │      └─ Checks org_id_cache (5 min TTL, keyed on slug)
+        │         └─ Cache miss → GET org-service/organizations/{slug}
+        │
+        └─ 4. Business logic runs (ScanService method)</code></pre>
+
+    <h2 id="scan-pipeline">Scan Pipeline</h2>
+    <p>From "Submit" click to findings in the database:</p>
+    <pre><code class="language-text">scan-service: POST /scans/git
+        │
+        ├─ Enforce quota (single DB query — active + daily counts)
+        ├─ Create ScanJob row  (status = "queued")
+        ├─ celery.send_task("run_sast_scan", args=[job_id])
+        │       → Redis queue
+        └─ Return job (202 Accepted)
+
+scan-worker: picks up task from Redis
+        │
+        ├─ Load job from DB; flip status → "running"
+        │
+        ├─ Prepare source:
+        │   ├─ git_url → clone_repo()  (validate URL, shallow clone, --no-creds)
+        │   └─ upload  → extract_zip() (zip-slip + zip-bomb checks)
+        │
+        ├─ Detect project type (single os.walk pass):
+        │   ├─ .py/.pyw  → has_python
+        │   ├─ .go       → has_go
+        │   ├─ .js/.ts   → has_js_ts
+        │   ├─ package.json  → has_pkg_json
+        │   └─ pyproject/requirements → has_py_deps
+        │
+        ├─ Run tools (all applicable, errors are non-fatal):
+        │   ├─ Always:     Bandit, Semgrep, Gitleaks, Trivy, Hadolint
+        │   ├─ If py_deps: pip-audit
+        │   ├─ If pkg_json: npm audit
+        │   └─ If has_go:  gosec
+        │
+        ├─ Dedup findings by SHA-256 fingerprint
+        │
+        ├─ Bulk-insert findings (SQLAlchemy 2.0 Core, 500-row chunks)
+        │
+        ├─ Update job: status → "completed", findings_count
+        │
+        └─ Cleanup workspace directory</code></pre>
+
+    <h2 id="auth-flow">Authentication Flow</h2>
+    <pre><code class="language-text">POST /users/login
+        │
+        ├─ Verify email + password (bcrypt)
+        ├─ Create access_token  (JWT HS256, 15 min)
+        ├─ Create refresh_token (JWT HS256, 7 days)
+        └─ Set both as httpOnly cookies:
+             access_token  — path="/",               max_age=900
+             refresh_token — path="/users/refresh",  max_age=604800
+
+Every subsequent request:
+        │
+        AutoRefreshMiddleware (auth-service only)
+        ├─ Access token valid? → pass through
+        └─ Access token expired?
+              ├─ Refresh token valid? → issue new access_token cookie → continue
+              └─ No valid refresh token → 401 (endpoint handles it)
+
+POST /users/logout
+        │
+        ├─ Read both tokens from cookies
+        ├─ Blacklist their JTIs in Redis (SETEX with remaining TTL)
+        └─ Delete cookies from browser</code></pre>
+
+    <h2 id="data-flow">Data Flow Diagram</h2>
+    <pre><code class="language-text">Registration:
+  User → auth-service → MySQL(users) → email-service
+
+Login:
+  User → auth-service → MySQL(users) → Set httpOnly cookies
+
+Scan submit (git):
+  User → scan-service
+             │→ auth-service (who am I?)
+             │→ org-service  (do I have scans.run?)
+             │→ MySQL(scan_jobs) INSERT
+             └→ Redis (Celery task)
+                   └→ scan-worker
+                          │→ GitHub (git clone)
+                          │→ Run SAST tools
+                          └→ MySQL(scan_findings) bulk INSERT
+
+Findings query:
+  User → scan-service
+             │→ auth-service (who am I?)
+             │→ org-service  (do I have scans.view?)
+             └→ MySQL(scan_jobs + scan_findings) SELECT</code></pre>
+
+    <h2 id="design-decisions">Key Design Decisions</h2>
+
+    <h3>No shared database</h3>
+    <p>Each service has its own logical database area. There are no cross-service foreign keys.
+    Referential integrity at service boundaries is enforced by business logic, not DB constraints.
+    This keeps services independently deployable and allows per-service database migrations.</p>
+
+    <h3>JWT cookies instead of Authorization header</h3>
+    <p>Tokens live in <code>httpOnly</code> cookies. JavaScript cannot read them, eliminating
+    XSS-based token theft. The <code>Secure</code> and <code>SameSite=Lax</code> flags prevent
+    cross-site transmission. The refresh token's <code>path="/users/refresh"</code> restriction
+    means it is sent only to the refresh endpoint — even if the access token is stolen, the
+    refresh token stays hidden.</p>
+
+    <h3>TTL cache in scan-service</h3>
+    <p>The dashboard polls <code>/scans/{job_id}</code> every few seconds while a scan runs.
+    Without caching, each poll would trigger two inter-service HTTP calls. A 10-second in-process
+    TTL cache eliminates >98% of those calls during active polling, at the cost of up to 10 s
+    of staleness after a role/logout change — acceptable for this use case.</p>
+
+    <h3>Celery for SAST execution</h3>
+    <p>SAST scans can take minutes. Running them synchronously in the API process would block
+    the event loop and risk timeouts. Celery decouples execution: the API returns immediately
+    with a job ID, the worker runs the tools in the background, and the client polls for results.
+    The worker has a 30-minute hard kill limit (<code>time_limit=1800</code>) and a 29-minute
+    soft limit for graceful cleanup.</p>
+
+    <h3>Single-pass extension detection</h3>
+    <p>Before running tools, the worker detects which languages are present. The naive approach
+    is one <code>rglob("*.py")</code> per extension — on a large repo, that's multiple full
+    directory traversals. Instead, a single <code>os.walk</code> pass collects all extensions
+    at once and early-exits as soon as all targets are found. Skips <code>node_modules</code>,
+    <code>.git</code>, <code>__pycache__</code>, and other noise directories.</p>
+
+    <h3>Bulk insert for findings</h3>
+    <p>A scan may produce thousands of findings. Inserting them row-by-row with SQLAlchemy ORM
+    objects is slow. Instead, the worker uses SQLAlchemy 2.0 Core <code>insert()</code> with
+    <code>executemany</code>, chunked at 500 rows per batch. This lets the DB driver batch
+    them into a single round-trip per chunk, cutting insert time dramatically.</p>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="assets/nav.js"></script>
+</body>
+</html>

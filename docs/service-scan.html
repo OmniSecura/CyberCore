@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CyberCore Docs — Scan Service</title>
+  <link rel="stylesheet" href="assets/style.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css"/>
+</head>
+<body>
+
+<header class="site-header">
+  <button class="hamburger" id="hamburger" aria-label="Toggle navigation">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+      <rect y="3" width="20" height="2" rx="1"/><rect y="9" width="20" height="2" rx="1"/><rect y="15" width="20" height="2" rx="1"/>
+    </svg>
+  </button>
+  <div class="logo">🛡️ Cyber<span>Core</span> <span class="version">v0.1.0</span></div>
+  <nav>
+    <a href="https://github.com/yourname/cybercore" target="_blank">GitHub</a>
+    <a href="getting-started.html">Quick Start</a>
+    <a href="api-scans.html">API</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="sidebar"><div id="nav-container"></div></aside>
+
+  <main class="content">
+    <h1>Scan Service</h1>
+    <div class="page-meta">
+      <span class="badge green">FastAPI</span>
+      <span class="badge blue">MySQL</span>
+      <span class="badge purple">Celery / Redis</span>
+      <span class="badge gray">Port :8082</span>
+    </div>
+    <p class="lead">The scan-service is the API layer for all security scanning operations.
+    It accepts scan requests, enforces quotas, dispatches async tasks to the scan-worker,
+    and serves the results. The service itself runs no scanning tools.</p>
+
+    <div class="toc">
+      <div class="toc-title">On this page</div>
+      <ul>
+        <li><a href="#data-model">Data Model</a></li>
+        <li><a href="#job-lifecycle">Job Lifecycle</a></li>
+        <li><a href="#quota">Quota Enforcement</a></li>
+        <li><a href="#git-scan">Git Scan Submission</a></li>
+        <li><a href="#upload-scan">Upload Scan Submission</a></li>
+        <li><a href="#findings">Findings Structure</a></li>
+        <li><a href="#caching">Inter-service Caching</a></li>
+        <li><a href="#cancel-delete">Cancel &amp; Delete</a></li>
+      </ul>
+    </div>
+
+    <h2 id="data-model">Data Model</h2>
+
+    <h3>scan_jobs table</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Column</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>id</code></td><td>CHAR(36)</td><td>UUID primary key</td></tr>
+          <tr><td><code>organization_id</code></td><td>CHAR(36)</td><td>Owner org; no FK (cross-service)</td></tr>
+          <tr><td><code>created_by</code></td><td>CHAR(36)</td><td>User UUID who submitted; no FK (cross-service)</td></tr>
+          <tr><td><code>name</code></td><td>VARCHAR(255)</td><td>Human-readable label for the scan</td></tr>
+          <tr><td><code>scan_type</code></td><td>VARCHAR(32)</td><td><code>sast</code> | <code>dast</code> (future)</td></tr>
+          <tr><td><code>status</code></td><td>VARCHAR(32)</td><td>See job lifecycle below</td></tr>
+          <tr><td><code>target_type</code></td><td>VARCHAR(32)</td><td><code>git_url</code> | <code>upload</code></td></tr>
+          <tr><td><code>target_url</code></td><td>TEXT</td><td>Public git repository URL (when target_type=git_url)</td></tr>
+          <tr><td><code>target_path</code></td><td>TEXT</td><td>Server-side path to the uploaded ZIP</td></tr>
+          <tr><td><code>celery_task_id</code></td><td>VARCHAR(255)</td><td>Celery AsyncResult ID for task revocation</td></tr>
+          <tr><td><code>started_at</code></td><td>DATETIME</td><td>When the worker picked up the job</td></tr>
+          <tr><td><code>completed_at</code></td><td>DATETIME</td><td>When the job finished (any terminal state)</td></tr>
+          <tr><td><code>error_message</code></td><td>TEXT</td><td>Tool errors (non-fatal) or failure reason</td></tr>
+          <tr><td><code>findings_count</code></td><td>INT</td><td>Denormalised total; avoids COUNT on findings for list views</td></tr>
+          <tr><td><code>extra</code></td><td>JSON</td><td>Free-form metadata (branch name, commit SHA, etc.)</td></tr>
+          <tr><td><code>created_at</code></td><td>DATETIME</td><td>Auto-set</td></tr>
+          <tr><td><code>deleted_at</code></td><td>DATETIME</td><td>Soft-delete timestamp</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>Indexes on scan_jobs</h4>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Index</th><th>Columns</th><th>Rationale</th></tr></thead>
+        <tbody>
+          <tr><td><code>ix_scan_jobs_org_active_created</code></td><td>(organization_id, deleted_at, created_at)</td><td>Serves the listing query (WHERE + ORDER BY) in one scan. Also covers any filter on org_id alone (leftmost column). No separate org_id index needed.</td></tr>
+          <tr><td><code>idx_scan_jobs_status</code></td><td>(status)</td><td>Worker "find my task" queries by status</td></tr>
+          <tr><td><code>idx_scan_jobs_created_by</code></td><td>(created_by)</td><td>Future user-scoped dashboards</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>scan_findings table</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Column</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>id</code></td><td>CHAR(36)</td><td>UUID primary key</td></tr>
+          <tr><td><code>scan_job_id</code></td><td>CHAR(36)</td><td>FK → scan_jobs.id (CASCADE DELETE)</td></tr>
+          <tr><td><code>tool</code></td><td>VARCHAR(32)</td><td><code>bandit</code>, <code>semgrep</code>, <code>gitleaks</code>, <code>trivy</code>, <code>hadolint</code>, <code>pip-audit</code>, <code>npm-audit</code>, <code>gosec</code></td></tr>
+          <tr><td><code>rule_id</code></td><td>VARCHAR(256)</td><td>Tool-specific rule identifier</td></tr>
+          <tr><td><code>severity</code></td><td>VARCHAR(16)</td><td><code>critical</code> | <code>high</code> | <code>medium</code> | <code>low</code> | <code>info</code></td></tr>
+          <tr><td><code>confidence</code></td><td>VARCHAR(16)</td><td>Tool-reported confidence level (optional)</td></tr>
+          <tr><td><code>title</code></td><td>VARCHAR(1024)</td><td>Short finding title</td></tr>
+          <tr><td><code>message</code></td><td>MEDIUMTEXT</td><td>Full finding description</td></tr>
+          <tr><td><code>file_path</code></td><td>VARCHAR(2048)</td><td>Relative path within the scanned source</td></tr>
+          <tr><td><code>line_start</code></td><td>INT</td><td>Starting line number (optional)</td></tr>
+          <tr><td><code>line_end</code></td><td>INT</td><td>Ending line number (optional)</td></tr>
+          <tr><td><code>code_snippet</code></td><td>MEDIUMTEXT</td><td>Relevant source code excerpt (optional)</td></tr>
+          <tr><td><code>cwe</code></td><td>VARCHAR(256)</td><td>CWE identifier (e.g. <code>CWE-89</code>)</td></tr>
+          <tr><td><code>owasp</code></td><td>VARCHAR(128)</td><td>OWASP Top 10 category (e.g. <code>A03:2021</code>)</td></tr>
+          <tr><td><code>fingerprint</code></td><td>VARCHAR(64)</td><td>SHA-256 dedup key (tool + rule + file + line)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><strong>UNIQUE constraint:</strong> <code>(scan_job_id, fingerprint)</code> —
+    prevents duplicate findings even if a worker retry or concurrent task inserts the same result twice.</p>
+
+    <h2 id="job-lifecycle">Job Lifecycle</h2>
+    <div class="status-flow">
+      <div class="status-node queued">queued</div>
+      <div class="status-arrow">→</div>
+      <div class="status-node running">running</div>
+      <div class="status-arrow">→</div>
+      <div class="status-node completed">completed</div>
+    </div>
+    <div class="status-flow">
+      <div class="status-node queued">queued</div>
+      <div class="status-arrow">→</div>
+      <div class="status-node running">running</div>
+      <div class="status-arrow">→</div>
+      <div class="status-node failed">failed</div>
+    </div>
+    <div class="status-flow">
+      <div class="status-node queued">queued</div>
+      <div class="status-arrow">→</div>
+      <div class="status-node cancelled">cancelled</div>
+    </div>
+    <div class="status-flow">
+      <div class="status-node running">running</div>
+      <div class="status-arrow">→</div>
+      <div class="status-node cancelled">cancelled</div>
+      <span style="color:var(--text-dim);font-size:13px">(cancel while running)</span>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Status</th><th>Meaning</th><th>Terminal</th></tr></thead>
+        <tbody>
+          <tr><td><code>queued</code></td><td>Accepted by API, waiting for worker to pick it up</td><td>No</td></tr>
+          <tr><td><code>running</code></td><td>Worker is actively running tools</td><td>No</td></tr>
+          <tr><td><code>completed</code></td><td>All tools finished; findings stored</td><td>Yes</td></tr>
+          <tr><td><code>failed</code></td><td>Unrecoverable error (bad URL, worker crash, etc.)</td><td>Yes</td></tr>
+          <tr><td><code>cancelled</code></td><td>Explicitly cancelled by user or auto-cancelled on delete</td><td>Yes</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="quota">Quota Enforcement</h2>
+    <p>Every scan submission checks two limits against the submitting organization:</p>
+    <ul>
+      <li><strong>Active limit:</strong> max 3 concurrent scans in <code>queued</code> or <code>running</code> state</li>
+      <li><strong>Daily limit:</strong> max 3 scans submitted in the last 24 hours</li>
+    </ul>
+    <p>Both limits are enforced in a <strong>single SQL query</strong> using conditional aggregation —
+    no second round-trip:</p>
+    <pre><code class="language-python">active_count, daily_count = db.query(
+    func.coalesce(func.sum(
+        case((ScanJob.status.in_(("queued", "running")), 1), else_=0)
+    ), 0),
+    func.coalesce(func.sum(
+        case((ScanJob.created_at >= since, 1), else_=0)
+    ), 0),
+).filter(
+    ScanJob.organization_id == organization_id,
+    ScanJob.deleted_at.is_(None),
+).one()</code></pre>
+    <p>Limits are configurable via env vars: <code>SCAN_FREE_PLAN_ACTIVE_LIMIT</code> and
+    <code>SCAN_FREE_PLAN_DAILY_LIMIT</code>.</p>
+
+    <h2 id="git-scan">Git Scan Submission</h2>
+    <p>The request body is validated before the job is created:</p>
+    <pre><code class="language-json">POST /api/v1/scans/organizations/{slug}/scans/git
+{
+  "name": "My Application v2.1",
+  "target_url": "https://github.com/owner/my-app"
+}</code></pre>
+    <p>The <code>target_url</code> field validator enforces:</p>
+    <ul>
+      <li>Scheme must be <code>http</code>, <code>https</code>, or <code>git</code></li>
+      <li>No leading dash (prevents git CLI option injection)</li>
+      <li>No whitespace or control characters</li>
+      <li>Hostname must match <code>[A-Za-z0-9.\-]{1,255}</code></li>
+    </ul>
+    <p>On success returns <code>202 Accepted</code> with the job object.</p>
+
+    <h2 id="upload-scan">Upload Scan Submission</h2>
+    <p>Accepts a multipart form upload:</p>
+    <pre><code class="language-bash">curl -X POST \
+  http://localhost:8082/api/v1/scans/organizations/my-org/scans/upload \
+  -b cookies.txt \
+  -F "name=My App Scan" \
+  -F "file=@/path/to/code.zip;type=application/zip"</code></pre>
+    <ul>
+      <li>Only <code>.zip</code> files accepted (filename check)</li>
+      <li>Streamed in 1 MiB chunks — never fully loaded into memory</li>
+      <li>Rejected if total bytes exceed <code>SCAN_UPLOAD_MAX_BYTES</code> (default 500 MiB)</li>
+      <li>Empty uploads rejected (0-byte file)</li>
+      <li>ZIP is stored in <code>SCAN_UPLOAD_DIR</code> and passed to the worker via the DB row</li>
+      <li>Deleted from disk when the job is deleted or after worker extracts it</li>
+    </ul>
+
+    <h2 id="findings">Findings Structure</h2>
+    <p>The <code>GET /findings</code> endpoint returns paginated findings with severity counts:</p>
+    <pre><code class="language-json">{
+  "total": 47,
+  "truncated": false,
+  "severity_counts": {
+    "critical": 2,
+    "high": 8,
+    "medium": 15,
+    "low": 20,
+    "info": 2
+  },
+  "items": [
+    {
+      "id": "uuid",
+      "tool": "semgrep",
+      "rule_id": "python.django.security.injection.tainted-sql-string",
+      "severity": "high",
+      "confidence": "high",
+      "title": "SQL injection via string formatting",
+      "message": "User input is formatted into a SQL query...",
+      "file_path": "app/views.py",
+      "line_start": 42,
+      "line_end": 44,
+      "code_snippet": "query = f\"SELECT * FROM users WHERE id = {user_id}\"",
+      "cwe": "CWE-89",
+      "owasp": "A03:2021",
+      "fingerprint": "sha256hex...",
+      "created_at": "2026-05-14T10:00:00Z"
+    }
+  ]
+}</code></pre>
+
+    <p><strong>Pagination parameters:</strong> <code>offset</code> (default 0), <code>limit</code>
+    (default 100, max 500). The <code>truncated</code> field is <code>true</code> when
+    <code>offset + len(items) &lt; total</code>.</p>
+    <p><strong>Filters:</strong> <code>?severity=high</code>, <code>?tool=semgrep</code>. Severity
+    counts always reflect the full scan, not the filtered set, so the summary bar stays accurate.</p>
+
+    <h2 id="caching">Inter-service Caching</h2>
+    <p>The scan-service caches results of cross-service calls in a process-local TTL+LRU cache.
+    This is critical for performance: the dashboard polls scan status every 3 seconds while a
+    scan is active.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Cache</th><th>Key</th><th>TTL</th><th>Eliminates</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>user_cache</code></td>
+            <td>SHA-256(cookies)</td>
+            <td>10 s</td>
+            <td>Repeated <code>GET /users/me</code> to auth-service</td>
+          </tr>
+          <tr>
+            <td><code>priv_cache</code></td>
+            <td>(SHA-256(cookies), slug)</td>
+            <td>10 s</td>
+            <td>Repeated <code>GET /roles/{slug}/my-privileges</code> to org-service</td>
+          </tr>
+          <tr>
+            <td><code>org_id_cache</code></td>
+            <td>slug string</td>
+            <td>300 s</td>
+            <td>Repeated <code>GET /organizations/{slug}</code> to org-service</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>The cache key for user/privilege lookups is a SHA-256 hash of the cookie header — raw
+    tokens are never stored in memory. Multiple Uvicorn workers each maintain their own copy
+    (process-local), which is fine because TTLs are short.</p>
+
+    <h2 id="cancel-delete">Cancel &amp; Delete</h2>
+
+    <h3>Cancel</h3>
+    <p>Allowed only for <code>queued</code> or <code>running</code> jobs. Revokes the Celery task
+    and sets status to <code>cancelled</code>. If the worker has already started, it detects the
+    revocation signal and stops.</p>
+
+    <h3>Delete (soft)</h3>
+    <p>Sets <code>deleted_at = now()</code>. The job and its findings are hidden from all list
+    and detail endpoints but remain in the database. Additional behaviour:</p>
+    <ul>
+      <li>If status is <code>running</code> → returns 400. Cancel first, then delete.</li>
+      <li>If status is <code>queued</code> → auto-cancels (revokes Celery task, status → cancelled) before soft-deleting.</li>
+      <li>If <code>target_type = "upload"</code> → deletes the ZIP file from disk (best-effort).</li>
+    </ul>
+    <p>All findings with <code>scan_job_id</code> matching a soft-deleted job remain in the database
+    (useful for audits). They are cascade-deleted only if the job row is hard-deleted from the DB directly.</p>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+<script src="assets/nav.js"></script>
+</body>
+</html>

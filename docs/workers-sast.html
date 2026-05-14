@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CyberCore Docs — SAST Worker</title>
+  <link rel="stylesheet" href="assets/style.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css"/>
+</head>
+<body>
+
+<header class="site-header">
+  <button class="hamburger" id="hamburger" aria-label="Toggle navigation">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+      <rect y="3" width="20" height="2" rx="1"/><rect y="9" width="20" height="2" rx="1"/><rect y="15" width="20" height="2" rx="1"/>
+    </svg>
+  </button>
+  <div class="logo">🛡️ Cyber<span>Core</span> <span class="version">v0.1.0</span></div>
+  <nav>
+    <a href="https://github.com/yourname/cybercore" target="_blank">GitHub</a>
+    <a href="getting-started.html">Quick Start</a>
+    <a href="api-scans.html">Scans API</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="sidebar"><div id="nav-container"></div></aside>
+
+  <main class="content">
+    <h1>SAST Worker</h1>
+    <div class="page-meta">
+      <span class="badge purple">Celery</span>
+      <span class="badge blue">Redis</span>
+      <span class="badge gray">Queue: sast</span>
+    </div>
+    <p class="lead">The scan-worker is a Celery process that runs all security tools asynchronously.
+    It has no HTTP API — it listens on the Redis <code>sast</code> queue and processes scan jobs
+    dispatched by scan-service.</p>
+
+    <div class="toc">
+      <div class="toc-title">On this page</div>
+      <ul>
+        <li><a href="#tools">Scanning Tools</a></li>
+        <li><a href="#detection">Project Type Detection</a></li>
+        <li><a href="#pipeline">Execution Pipeline</a></li>
+        <li><a href="#dedup">Deduplication</a></li>
+        <li><a href="#fingerprint">Fingerprinting</a></li>
+        <li><a href="#git-security">Git Clone Security</a></li>
+        <li><a href="#zip-security">ZIP Extraction Security</a></li>
+        <li><a href="#error-handling">Error Handling</a></li>
+        <li><a href="#config">Configuration</a></li>
+      </ul>
+    </div>
+
+    <h2 id="tools">Scanning Tools</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Tool</th>
+            <th>Languages / Domain</th>
+            <th>Always runs</th>
+            <th>What it finds</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><a href="https://bandit.readthedocs.io" target="_blank">Bandit</a></td>
+            <td>Python</td>
+            <td>Yes (0 findings on non-Python)</td>
+            <td>Python-specific vulnerabilities: SQL injection, hard-coded credentials, insecure functions, eval/exec misuse</td>
+          </tr>
+          <tr>
+            <td><a href="https://semgrep.dev" target="_blank">Semgrep</a></td>
+            <td>Python, JS, TS, Go, Java, PHP, Ruby, C, Rust + more</td>
+            <td>Yes (auto-detects languages)</td>
+            <td>OWASP Top 10, framework-specific rules (Django, Flask, Express), secrets patterns</td>
+          </tr>
+          <tr>
+            <td><a href="https://gitleaks.io" target="_blank">Gitleaks</a></td>
+            <td>All files</td>
+            <td>Yes</td>
+            <td>Secrets and API keys committed to source: AWS keys, GitHub tokens, private keys, connection strings</td>
+          </tr>
+          <tr>
+            <td><a href="https://trivy.dev" target="_blank">Trivy</a></td>
+            <td>pip, npm, go.mod, Cargo, gemspec + IaC (Dockerfile, Terraform)</td>
+            <td>Yes</td>
+            <td>CVEs in dependencies, Dockerfile misconfigurations, IaC security issues</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/hadolint/hadolint" target="_blank">Hadolint</a></td>
+            <td>Dockerfile</td>
+            <td>Yes (skipped if no Dockerfile)</td>
+            <td>Dockerfile best-practice violations, security anti-patterns</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/pypa/pip-audit" target="_blank">pip-audit</a></td>
+            <td>Python (requirements.txt, pyproject.toml, Pipfile)</td>
+            <td>No — only if Python deps detected</td>
+            <td>Known CVEs in Python package dependencies</td>
+          </tr>
+          <tr>
+            <td>npm audit</td>
+            <td>Node.js (package.json)</td>
+            <td>No — only if package.json found</td>
+            <td>Known CVEs in Node.js dependencies</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/securego/gosec" target="_blank">gosec</a></td>
+            <td>Go</td>
+            <td>No — only if .go files found</td>
+            <td>Go-specific security issues: hardcoded credentials, SQL injection, unsafe operations</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout info">
+      <div class="callout-title">Missing tools are skipped gracefully</div>
+      <p>If a tool binary is not installed (raises <code>FileNotFoundError</code>), the worker
+      logs an info message and continues with the other tools. You don't need all 8 tools to
+      run scans — install only the ones relevant to your stack.</p>
+    </div>
+
+    <h2 id="detection">Project Type Detection</h2>
+    <p>Before running any tools, the worker detects which languages and dependency manifests
+    are present. This is done in a <strong>single <code>os.walk</code> pass</strong> over the
+    source directory:</p>
+    <pre><code class="language-python">def _detect_extensions(directory: Path, extensions: set[str]) -> set[str]:
+    found: set[str] = set()
+    # Noisy directories are skipped entirely
+    skip_dirs = {".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build"}
+    for root, dirnames, filenames in os.walk(directory):
+        dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+        for name in filenames:
+            dot = name.rfind(".")
+            if dot == -1: continue
+            ext = name[dot:].lower()
+            if ext in extensions:
+                found.add(ext)
+                if len(found) == len(extensions):
+                    return found  # early exit — all targets found
+    return found</code></pre>
+
+    <p>The result determines which conditional tools run:</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Detected signal</th><th>Triggers</th></tr></thead>
+        <tbody>
+          <tr><td>.py or .pyw files</td><td><code>has_python = True</code></td></tr>
+          <tr><td>.go files</td><td><code>has_go = True</code> → gosec runs</td></tr>
+          <tr><td>.js, .ts, .jsx, .tsx, .mjs</td><td><code>has_js_ts = True</code></td></tr>
+          <tr><td>package.json in root</td><td><code>has_pkg_json = True</code> → npm audit runs</td></tr>
+          <tr><td>pyproject.toml, Pipfile, or any requirements*.txt</td><td><code>has_py_deps = True</code> → pip-audit runs</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="pipeline">Execution Pipeline</h2>
+    <pre><code class="language-text">1. Load job from DB; flip status → "running" (atomic — cancelled/deleted jobs exit early)
+
+2. Prepare source code:
+     git_url  → validate URL → git clone --depth 1 -- URL dest
+     upload   → validate ZIP (zip-slip + zip-bomb) → extract to workspace
+
+3. Single-pass extension detection (skip node_modules, .git, etc.)
+
+4. Run tools (all applicable; errors are non-fatal per tool):
+     ├─ bandit    (always)
+     ├─ semgrep   (always)
+     ├─ gitleaks  (always, custom inline error handling)
+     ├─ trivy     (always)
+     ├─ hadolint  (always)
+     ├─ pip-audit (if has_py_deps)
+     ├─ npm audit (if has_pkg_json)
+     └─ gosec     (if has_go)
+
+5. Deduplicate: filter all_findings by fingerprint hash set
+
+6. Persist:
+     ├─ INSERT INTO scan_findings ... (Core insert, 500-row chunks)
+     └─ UPDATE scan_jobs SET status='completed', findings_count=N
+
+7. Cleanup workspace directory (always, even on failure)</code></pre>
+
+    <h2 id="dedup">Deduplication</h2>
+    <p>Multiple tools may report the same vulnerability (e.g. Semgrep and Bandit both catch
+    the same SQL injection). Each finding has a <strong>fingerprint</strong> that is unique
+    to the combination of tool + rule + file + location. The worker deduplicates in memory
+    before inserting:</p>
+    <pre><code class="language-python">seen: set[str] = set()
+unique_findings: list[dict] = []
+for f in all_findings:
+    fp = f["fingerprint"]
+    if fp not in seen:
+        seen.add(fp)
+        unique_findings.append(f)</code></pre>
+    <p>The database also enforces a <code>UNIQUE(scan_job_id, fingerprint)</code> constraint
+    as a second layer — concurrent workers or retries cannot insert duplicates.</p>
+
+    <h2 id="fingerprint">Fingerprinting</h2>
+    <p>Each parser generates a fingerprint for its findings. The fingerprint is a SHA-256 hash
+    of the fields that uniquely identify a vulnerability location:</p>
+    <pre><code class="language-python">import hashlib
+
+def make_fingerprint(tool: str, rule_id: str, file_path: str,
+                     line_start: int | None) -> str:
+    raw = f"{tool}:{rule_id}:{file_path}:{line_start}"
+    return hashlib.sha256(raw.encode()).hexdigest()</code></pre>
+    <p>The same finding in the same file at the same line will always produce the same
+    fingerprint — regardless of which run found it. This makes the UNIQUE constraint meaningful
+    across retries.</p>
+
+    <h2 id="git-security">Git Clone Security</h2>
+    <p>User-supplied git URLs are validated before cloning. The validation runs twice:
+    once in the API (schema validator) and once in the worker (before the subprocess call).</p>
+
+    <h3>Allowed URL schemes</h3>
+    <pre><code class="language-python">_ALLOWED_GIT_SCHEMES = ("http", "https", "git")
+# Blocked: ext::, file://, ssh://, scp-style user@host:path</code></pre>
+
+    <h3>Clone command</h3>
+    <pre><code class="language-python">subprocess.run(
+    ["git", "clone", "--depth", "1", "--single-branch", "--", safe_url, str(dest)],
+    env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},  # never block for credentials
+    capture_output=True,
+    text=True,
+    timeout=120,
+)</code></pre>
+    <ul>
+      <li><code>--</code> — separates git options from positional args, preventing URL-as-option injection</li>
+      <li><code>GIT_TERMINAL_PROMPT=0</code> — prevents the worker from hanging indefinitely waiting for credentials on private repos</li>
+      <li><code>timeout=120</code> — clones that stall (network issues, huge repos) are killed after 2 minutes</li>
+      <li><code>--depth 1</code> — shallow clone; fetches only the latest commit, not full history</li>
+    </ul>
+
+    <h2 id="zip-security">ZIP Extraction Security</h2>
+
+    <h3>Zip-slip (path traversal)</h3>
+    <pre><code class="language-python">for info in zf.infolist():
+    name = info.filename
+    # Level 1: string check (cheap)
+    if name.startswith(("/", "\\")) or any(p in ("..",) for p in Path(name).parts):
+        raise RuntimeError(f"ZIP rejected: unsafe entry path '{name}'")
+
+    # Level 2: resolved path check (handles symlink tricks)
+    target = (dest / name).resolve()
+    try:
+        target.relative_to(dest_resolved)
+    except ValueError:
+        raise RuntimeError(f"ZIP rejected: entry escapes target '{name}'")</code></pre>
+
+    <h3>Zip-bomb (size limits)</h3>
+    <pre><code class="language-python"># Checked before any extraction
+if len(infos) > max_entries:          # default 200,000
+    raise RuntimeError("too many entries")
+
+total_uncompressed = 0
+for info in infos:
+    total_uncompressed += info.file_size
+    if total_uncompressed > max_uncompressed_bytes:  # default 5 GiB
+        raise RuntimeError("uncompressed size exceeds limit")</code></pre>
+    <p>Both limits are checked on <code>infolist()</code> metadata before <code>extractall()</code>
+    is called. A zip-bomb is rejected without decompressing a single byte.</p>
+
+    <h2 id="error-handling">Error Handling</h2>
+
+    <h3>Tool errors (non-fatal)</h3>
+    <p>Each tool runs inside <code>_run_tool()</code>. Tool failures are caught and collected;
+    they do not abort the scan:</p>
+    <pre><code class="language-python">def _run_tool(name, runner_fn, parser_fn, *args):
+    try:
+        raw      = runner_fn(*args)
+        findings = parser_fn(raw, args[-1])
+        return findings, None
+    except FileNotFoundError:
+        log.info("%s not installed — skipping", name)
+        return [], None
+    except Exception as exc:
+        log.warning("%s failed: %s", name, exc)
+        return [], f"{name}: {exc}"</code></pre>
+    <p>Tool errors are joined and stored in <code>scan_jobs.error_message</code>. The scan
+    status becomes <code>completed</code> (not <code>failed</code>) — partial results are
+    better than nothing.</p>
+
+    <h3>Fatal task errors</h3>
+    <p>If the task raises an unhandled exception (bad DB connection, corrupt ZIP, etc.),
+    the outer <code>try/except</code> catches it, sets the job to <code>failed</code> with
+    the error message, and re-raises so Celery knows the task failed:</p>
+    <pre><code class="language-python">except Exception as exc:
+    log.exception("SAST task failed for job %s", job_id)
+    try:
+        with db_session() as db:
+            job = db.query(ScanJob).filter_by(id=job_id).first()
+            if job:
+                job.status        = "failed"
+                job.error_message = str(exc)
+                job.completed_at  = datetime.now(tz=timezone.utc)
+    except Exception:
+        pass    # DB itself may be down; don't mask the original error
+    raise       # let Celery see the failure</code></pre>
+
+    <h3>Time limits</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Limit</th><th>Value</th><th>Effect</th></tr></thead>
+        <tbody>
+          <tr><td>Soft time limit</td><td>29 minutes</td><td>Raises <code>SoftTimeLimitExceeded</code> — worker can catch and clean up</td></tr>
+          <tr><td>Hard time limit</td><td>30 minutes</td><td>Worker process is killed with SIGKILL</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="config">Configuration</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Env var</th><th>Default</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>CELERY_BROKER_URL</code></td><td><code>redis://localhost:6379/0</code></td><td>Redis broker</td></tr>
+          <tr><td><code>CELERY_RESULT_BACKEND</code></td><td><code>redis://localhost:6379/0</code></td><td>Redis result backend</td></tr>
+          <tr><td><code>DB_URL</code></td><td><code>mysql+pymysql://root:root@localhost/cybercore</code></td><td>Same MySQL as scan-service</td></tr>
+          <tr><td><code>SCAN_WORKSPACE_DIR</code></td><td><code>/tmp/cybercore/scans</code></td><td>Temp directory for clones and extractions</td></tr>
+          <tr><td><code>SCAN_UPLOAD_DIR</code></td><td><code>/tmp/cybercore/uploads</code></td><td>Must match scan-service SCAN_UPLOAD_DIR</td></tr>
+          <tr><td><code>SCAN_ZIP_MAX_UNCOMPRESSED_BYTES</code></td><td>5368709120 (5 GiB)</td><td>Zip-bomb uncompressed size limit</td></tr>
+          <tr><td><code>SCAN_ZIP_MAX_ENTRIES</code></td><td>200000</td><td>Zip-bomb entry count limit</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Starting the worker</h3>
+    <pre><code class="language-bash">cd workers/scan-worker
+celery -A src.celery_app worker \
+  -Q sast \
+  --loglevel=info \
+  --concurrency=2   # number of parallel scans</code></pre>
+    <p>On Windows, Celery falls back to the <code>solo</code> pool (single process) automatically.
+    On Linux/macOS it uses <code>prefork</code>. Set <code>--concurrency</code> based on
+    available RAM — each scan can use significant memory running 8 tools simultaneously.</p>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+<script src="assets/nav.js"></script>
+</body>
+</html>

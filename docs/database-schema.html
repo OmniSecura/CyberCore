@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CyberCore Docs — Database Schema</title>
+  <link rel="stylesheet" href="assets/style.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css"/>
+</head>
+<body>
+
+<header class="site-header">
+  <button class="hamburger" id="hamburger" aria-label="Toggle navigation">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+      <rect y="3" width="20" height="2" rx="1"/><rect y="9" width="20" height="2" rx="1"/><rect y="15" width="20" height="2" rx="1"/>
+    </svg>
+  </button>
+  <div class="logo">🛡️ Cyber<span>Core</span> <span class="version">v0.1.0</span></div>
+  <nav>
+    <a href="https://github.com/yourname/cybercore" target="_blank">GitHub</a>
+    <a href="getting-started.html">Quick Start</a>
+    <a href="api-auth.html">API</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="sidebar"><div id="nav-container"></div></aside>
+
+  <main class="content">
+    <h1>Database Schema</h1>
+    <p class="lead">MySQL 8.0. All tables use InnoDB, UTF-8mb4, and soft deletes.
+    Schema files live in <code>database/sql/tables/</code>. Apply the migration
+    in <code>database/sql/migrations/</code> on running databases.</p>
+
+    <div class="callout info">
+      <div class="callout-title">Dev vs Production</div>
+      <p>In development, set <code>DB_CREATE_TABLES=true</code> and SQLAlchemy's
+      <code>create_all()</code> builds the schema automatically. For production, use the
+      SQL files — they include comments, constraints, and CHECK expressions that
+      <code>create_all()</code> may render differently across database versions.</p>
+    </div>
+
+    <div class="toc">
+      <div class="toc-title">Tables</div>
+      <ul>
+        <li><a href="#users">users</a></li>
+        <li><a href="#user-tokens">user_tokens</a></li>
+        <li><a href="#scan-jobs">scan_jobs</a></li>
+        <li><a href="#scan-findings">scan_findings</a></li>
+        <li><a href="#organizations">organizations</a></li>
+        <li><a href="#conventions">Conventions</a></li>
+        <li><a href="#migration">Migration Guide</a></li>
+      </ul>
+    </div>
+
+    <h2 id="users">users</h2>
+    <p>Owned by <strong>auth-service</strong>. The source of truth for all user identities.</p>
+    <pre><code class="language-sql">CREATE TABLE users (
+    id                      CHAR(36)        NOT NULL DEFAULT (UUID()),
+    email                   VARCHAR(255)    NOT NULL,
+    email_verified          BOOLEAN         NOT NULL DEFAULT FALSE,
+    password_hash           VARCHAR(255)    NULL,       -- NULL for OAuth-only accounts
+    full_name               VARCHAR(255)    NOT NULL,
+    avatar_url              VARCHAR(500)    NULL,
+
+    -- Account status
+    is_active               BOOLEAN         NOT NULL DEFAULT TRUE,
+    is_superadmin           BOOLEAN         NOT NULL DEFAULT FALSE,
+
+    -- MFA (TOTP)
+    mfa_enabled             BOOLEAN         NOT NULL DEFAULT FALSE,
+    mfa_secret              VARCHAR(64)     NULL,
+
+    -- Brute-force lockout
+    failed_login_attempts   INT             NOT NULL DEFAULT 0,
+    locked_until            DATETIME        NULL,
+
+    -- Audit
+    last_login_at           DATETIME        NULL,
+    last_login_ip           VARCHAR(45)     NULL,
+    created_at              DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at              DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted_at              DATETIME        NULL,    -- soft-delete
+
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_users_email (email)
+);</code></pre>
+
+    <h2 id="user-tokens">user_tokens</h2>
+    <p>Stores hashed one-time tokens for email verification and password resets.
+    Only the SHA-256 hash is persisted — the plaintext token is sent via email and never stored.</p>
+    <pre><code class="language-sql">CREATE TABLE user_tokens (
+    id          CHAR(36)        NOT NULL DEFAULT (UUID()),
+    user_id     CHAR(36)        NOT NULL,
+    token_hash  VARCHAR(255)    NOT NULL,   -- SHA-256(plaintext)
+    token_type  VARCHAR(50)     NOT NULL,   -- 'email_verification' | 'password_reset' | 'org_invite'
+    expires_at  DATETIME        NOT NULL,
+    used_at     DATETIME        NULL,       -- NULL = unused; set when token consumed
+
+    created_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_user_tokens_hash (token_hash),
+    CONSTRAINT fk_user_tokens_user
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+);</code></pre>
+
+    <h2 id="scan-jobs">scan_jobs</h2>
+    <p>Owned by <strong>scan-service</strong> and <strong>scan-worker</strong>. One row per scan submission.</p>
+    <pre><code class="language-sql">CREATE TABLE scan_jobs (
+    id                  CHAR(36)        NOT NULL DEFAULT (UUID()),
+    organization_id     CHAR(36)        NOT NULL,   -- no FK (cross-service boundary)
+    created_by          CHAR(36)        NOT NULL,   -- user_id; no FK (cross-service)
+
+    name                VARCHAR(255)    NOT NULL,
+    scan_type           VARCHAR(32)     NOT NULL DEFAULT 'sast',
+
+    -- Lifecycle: queued → running → completed | failed | cancelled
+    status              VARCHAR(32)     NOT NULL DEFAULT 'queued',
+
+    target_type         VARCHAR(32)     NOT NULL,   -- 'git_url' | 'upload'
+    target_url          TEXT            NULL,
+    target_path         TEXT            NULL,
+
+    celery_task_id      VARCHAR(255)    NULL,
+
+    started_at          DATETIME        NULL,
+    completed_at        DATETIME        NULL,
+    error_message       TEXT            NULL,
+
+    -- Denormalised: avoids JOIN on list queries
+    findings_count      INT             NOT NULL DEFAULT 0,
+    extra               JSON            NULL,
+
+    created_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted_at          DATETIME        NULL,
+
+    PRIMARY KEY (id),
+
+    CONSTRAINT chk_scan_jobs_status
+        CHECK (status IN ('queued','running','completed','failed','cancelled')),
+    CONSTRAINT chk_scan_jobs_type
+        CHECK (scan_type IN ('sast','dast')),
+    CONSTRAINT chk_scan_jobs_target_type
+        CHECK (target_type IN ('git_url','upload'))
+);
+
+-- Composite index covers: WHERE org_id = ? AND deleted_at IS NULL ORDER BY created_at DESC
+-- Also covers queries filtering only on organization_id (leftmost column).
+CREATE INDEX ix_scan_jobs_org_active_created ON scan_jobs(organization_id, deleted_at, created_at);
+CREATE INDEX idx_scan_jobs_status            ON scan_jobs(status);
+CREATE INDEX idx_scan_jobs_created_by        ON scan_jobs(created_by);
+CREATE INDEX idx_scan_jobs_created_at        ON scan_jobs(created_at);</code></pre>
+
+    <h2 id="scan-findings">scan_findings</h2>
+    <p>Owned by <strong>scan-service</strong> and written by <strong>scan-worker</strong>.
+    One row per unique finding per scan.</p>
+    <pre><code class="language-sql">CREATE TABLE scan_findings (
+    id          CHAR(36)        NOT NULL DEFAULT (UUID()),
+    scan_job_id CHAR(36)        NOT NULL,
+
+    tool        VARCHAR(32)     NOT NULL,   -- 'bandit'|'semgrep'|'gitleaks'|'trivy'|etc.
+    rule_id     VARCHAR(256)    NOT NULL,
+    severity    VARCHAR(16)     NOT NULL,   -- 'critical'|'high'|'medium'|'low'|'info'
+    confidence  VARCHAR(16)     NULL,
+
+    title       VARCHAR(1024)   NOT NULL,
+    message     MEDIUMTEXT      NOT NULL,   -- full description
+
+    file_path   VARCHAR(2048)   NOT NULL,
+    line_start  INT             NULL,
+    line_end    INT             NULL,
+    code_snippet MEDIUMTEXT     NULL,
+
+    cwe         VARCHAR(256)    NULL,       -- e.g. 'CWE-89'
+    owasp       VARCHAR(128)    NULL,       -- e.g. 'A03:2021'
+
+    -- SHA-256 of (tool:rule_id:file_path:line_start)
+    -- Ensures one finding per location per scan, even across retries
+    fingerprint VARCHAR(64)     NOT NULL,
+
+    created_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (id),
+
+    -- DB-level dedup guarantee: concurrent workers cannot insert duplicates
+    CONSTRAINT uq_findings_job_fp UNIQUE (scan_job_id, fingerprint),
+
+    CONSTRAINT fk_findings_job
+        FOREIGN KEY (scan_job_id) REFERENCES scan_jobs (id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_findings_scan_job_id ON scan_findings(scan_job_id);
+CREATE INDEX idx_findings_severity    ON scan_findings(severity);</code></pre>
+
+    <h2 id="organizations">organizations</h2>
+    <p>Owned by <strong>organization-service</strong>. Abbreviated schema — see the service's
+    SQL files for the full definition including roles and members tables.</p>
+    <pre><code class="language-sql">CREATE TABLE organizations (
+    id                  CHAR(36)        NOT NULL DEFAULT (UUID()),
+    organization_name   VARCHAR(255)    NOT NULL,
+    organization_slug   VARCHAR(100)    NOT NULL,   -- URL-friendly, globally unique
+
+    created_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted_at          DATETIME        NULL,
+
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_org_slug (organization_slug)   -- freed on soft delete
+);</code></pre>
+
+    <h2 id="conventions">Conventions</h2>
+
+    <h3>Primary keys</h3>
+    <p>All tables use <code>CHAR(36)</code> UUID primary keys generated by <code>UUID()</code>
+    in MySQL or <code>uuid.uuid4()</code> in Python. UUIDs are:
+    <ul>
+      <li>Globally unique across databases (safe for future sharding)</li>
+      <li>Safe to expose in URLs (no sequential ID enumeration)</li>
+      <li>Compatible with soft-delete patterns (no re-use)</li>
+    </ul></p>
+
+    <h3>Soft deletes</h3>
+    <p>Main entity tables (<code>users</code>, <code>organizations</code>, <code>scan_jobs</code>)
+    use <code>deleted_at DATETIME NULL</code>. A row is "deleted" when <code>deleted_at IS NOT NULL</code>.
+    All queries filter on <code>deleted_at IS NULL</code>. Hard deletes are avoided — historical
+    data is preserved for audits.</p>
+
+    <h3>Audit columns</h3>
+    <p>Tables that use <code>AuditMixin</code> (SQLAlchemy) get: <code>created_at</code>,
+    <code>updated_at</code>, <code>deleted_at</code>. Tables that only need timestamps
+    (no soft delete) use <code>TimestampMixin</code>: <code>created_at</code>, <code>updated_at</code>.</p>
+
+    <h3>Cross-service references</h3>
+    <p>There are <strong>no foreign keys across service boundaries</strong>. For example,
+    <code>scan_jobs.organization_id</code> references an org UUID, but there is no FK
+    constraint — org validation is handled by the organization-service via HTTP. This is
+    intentional: it keeps services independently deployable.</p>
+
+    <h2 id="migration">Migration Guide</h2>
+    <p>An idempotent migration script is provided for applying schema changes to a running
+    production database:</p>
+    <pre><code class="language-bash">mysql -u root -p cybercore \
+  &lt; database/sql/migrations/2026_05_14_scan_security_fixes.sql</code></pre>
+
+    <p>The migration is safe to re-run. It checks <code>information_schema</code> before each
+    DDL statement so it skips changes that were already applied:</p>
+    <pre><code class="language-sql">-- Example guard from the migration:
+SELECT COUNT(*) INTO @idx_exists
+FROM information_schema.STATISTICS
+WHERE table_schema = DATABASE()
+  AND table_name   = 'scan_jobs'
+  AND index_name   = 'ix_scan_jobs_org_active_created';
+
+SET @sql = IF(@idx_exists = 0,
+    'CREATE INDEX ix_scan_jobs_org_active_created ON scan_jobs(organization_id, deleted_at, created_at)',
+    'SELECT "index already exists — skipping"');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;</code></pre>
+
+    <h3>Changes in migration 2026-05-14</h3>
+    <ul>
+      <li><strong>Added:</strong> <code>ix_scan_jobs_org_active_created</code> composite index on <code>scan_jobs</code></li>
+      <li><strong>Dropped:</strong> <code>idx_scan_jobs_org_id</code> (redundant — composite covers it)</li>
+      <li><strong>Added:</strong> <code>uq_findings_job_fp UNIQUE(scan_job_id, fingerprint)</code> on <code>scan_findings</code></li>
+    </ul>
+
+    <div class="callout warning">
+      <div class="callout-title">Check for duplicates before adding UNIQUE</div>
+      <p>The migration includes a pre-flight check that reports how many duplicate
+      <code>(scan_job_id, fingerprint)</code> pairs exist before attempting to add the UNIQUE
+      constraint. Adding UNIQUE to a table with duplicates fails immediately. If your
+      production database has duplicates, use the provided cleanup DELETE statement
+      (commented out in the migration) to deduplicate first.</p>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-sql.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+<script src="assets/nav.js"></script>
+</body>
+</html>

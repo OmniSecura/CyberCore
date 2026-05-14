@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CyberCore Docs — Auth Service</title>
+  <link rel="stylesheet" href="assets/style.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css"/>
+</head>
+<body>
+
+<header class="site-header">
+  <button class="hamburger" id="hamburger" aria-label="Toggle navigation">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+      <rect y="3" width="20" height="2" rx="1"/><rect y="9" width="20" height="2" rx="1"/><rect y="15" width="20" height="2" rx="1"/>
+    </svg>
+  </button>
+  <div class="logo">🛡️ Cyber<span>Core</span> <span class="version">v0.1.0</span></div>
+  <nav>
+    <a href="https://github.com/yourname/cybercore" target="_blank">GitHub</a>
+    <a href="getting-started.html">Quick Start</a>
+    <a href="api-auth.html">API</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="sidebar"><div id="nav-container"></div></aside>
+
+  <main class="content">
+    <h1>Auth Service</h1>
+    <div class="page-meta">
+      <span class="badge green">FastAPI</span>
+      <span class="badge blue">MySQL</span>
+      <span class="badge purple">Redis</span>
+      <span class="badge gray">Port :8000</span>
+    </div>
+    <p class="lead">The auth-service is the sole identity provider for CyberCore. It handles
+    user registration, login, email verification, password resets, JWT issuance, and session
+    management. No other service writes user data.</p>
+
+    <div class="toc">
+      <div class="toc-title">On this page</div>
+      <ul>
+        <li><a href="#data-model">Data Model</a></li>
+        <li><a href="#registration">Registration Flow</a></li>
+        <li><a href="#login">Login &amp; Session Flow</a></li>
+        <li><a href="#email-verification">Email Verification</a></li>
+        <li><a href="#password-reset">Password Reset</a></li>
+        <li><a href="#logout">Logout</a></li>
+        <li><a href="#middleware">AutoRefreshMiddleware</a></li>
+        <li><a href="#token-blacklist">Token Blacklist</a></li>
+        <li><a href="#superadmin">Superadmin</a></li>
+      </ul>
+    </div>
+
+    <h2 id="data-model">Data Model</h2>
+
+    <h3>users table</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Column</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>id</code></td><td>CHAR(36)</td><td>UUID primary key, generated on insert</td></tr>
+          <tr><td><code>email</code></td><td>VARCHAR(255)</td><td>Unique; lowercased on save</td></tr>
+          <tr><td><code>email_verified</code></td><td>BOOLEAN</td><td>Must be <code>true</code> before first login</td></tr>
+          <tr><td><code>password_hash</code></td><td>VARCHAR(255)</td><td>bcrypt hash; NULL for OAuth-only accounts</td></tr>
+          <tr><td><code>full_name</code></td><td>VARCHAR(255)</td><td>First + last name</td></tr>
+          <tr><td><code>avatar_url</code></td><td>VARCHAR(500)</td><td>Optional profile picture URL</td></tr>
+          <tr><td><code>is_active</code></td><td>BOOLEAN</td><td><code>false</code> for soft-deleted accounts</td></tr>
+          <tr><td><code>is_superadmin</code></td><td>BOOLEAN</td><td>Platform-level admin; set manually</td></tr>
+          <tr><td><code>mfa_enabled</code></td><td>BOOLEAN</td><td>TOTP MFA status</td></tr>
+          <tr><td><code>mfa_secret</code></td><td>VARCHAR(64)</td><td>TOTP secret (encrypted at rest in production)</td></tr>
+          <tr><td><code>failed_login_attempts</code></td><td>INT</td><td>Reset to 0 on successful login</td></tr>
+          <tr><td><code>locked_until</code></td><td>DATETIME</td><td>Brute-force lockout expiry; NULL = not locked</td></tr>
+          <tr><td><code>last_login_at</code></td><td>DATETIME</td><td>Timestamp of last successful login</td></tr>
+          <tr><td><code>last_login_ip</code></td><td>VARCHAR(45)</td><td>IPv4 or IPv6 of last login</td></tr>
+          <tr><td><code>created_at</code></td><td>DATETIME</td><td>Auto-set on insert (AuditMixin)</td></tr>
+          <tr><td><code>updated_at</code></td><td>DATETIME</td><td>Auto-updated on change (AuditMixin)</td></tr>
+          <tr><td><code>deleted_at</code></td><td>DATETIME</td><td>Soft-delete timestamp; NULL = active</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>user_tokens table</h3>
+    <p>Stores hashed tokens for email verification, password reset, and org invites.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Column</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>id</code></td><td>CHAR(36)</td><td>UUID primary key</td></tr>
+          <tr><td><code>user_id</code></td><td>CHAR(36)</td><td>FK → users.id (CASCADE DELETE)</td></tr>
+          <tr><td><code>token_hash</code></td><td>VARCHAR(255)</td><td>SHA-256 of the plaintext token; UNIQUE</td></tr>
+          <tr><td><code>token_type</code></td><td>VARCHAR(50)</td><td><code>email_verification</code> | <code>password_reset</code> | <code>org_invite</code></td></tr>
+          <tr><td><code>expires_at</code></td><td>DATETIME</td><td>Verification: 24h. Password reset: 1h.</td></tr>
+          <tr><td><code>used_at</code></td><td>DATETIME</td><td>NULL = unused. Set when token is consumed.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="registration">Registration Flow</h2>
+    <pre><code class="language-text">POST /api/v1/users/register
+  {email, full_name, password}
+        │
+        ├─ Validate password policy (12+ chars, uppercase, lowercase, digit, special)
+        ├─ Check email uniqueness
+        ├─ Hash password with bcrypt
+        ├─ INSERT user (email_verified=false)
+        ├─ Generate email verification token (secrets.token_urlsafe(48))
+        ├─ Store SHA-256(token) in user_tokens table (TTL 24h)
+        ├─ Send welcome email (best-effort, non-blocking)
+        ├─ Send verification email with token link (best-effort)
+        └─ Return 201 { "message": "Account created..." }
+
+        ⚠ No tokens issued. User must verify email before logging in.</code></pre>
+
+    <h2 id="login">Login &amp; Session Flow</h2>
+    <pre><code class="language-text">POST /api/v1/users/login
+  {email, password}
+        │
+        ├─ Look up user by email
+        ├─ Check: is_active, email_verified, locked_until
+        ├─ Verify bcrypt(password, password_hash)
+        │     └─ Failure: increment failed_login_attempts
+        │          └─ ≥ 5 failures → set locked_until = now + 15 min
+        ├─ Reset failed_login_attempts, update last_login_at
+        ├─ create_access_token(user_id)   → JWT HS256, 15 min
+        ├─ create_refresh_token(user_id)  → JWT HS256, 7 days
+        └─ Set cookies:
+             access_token  (path="/",              max_age=900,    httpOnly, Secure, SameSite=Lax)
+             refresh_token (path="/users/refresh", max_age=604800, httpOnly, Secure, SameSite=Lax)
+        └─ Return 200 { "message": "Login successful" }</code></pre>
+
+    <h2 id="email-verification">Email Verification</h2>
+    <pre><code class="language-text">GET /api/v1/email/verify?token=TOKEN
+        │
+        ├─ SHA-256 hash the plaintext token
+        ├─ Find user_tokens record (hash match, type="email_verification", used_at=NULL, not expired)
+        ├─ Mark token as used (used_at = now)
+        ├─ Set user.email_verified = true
+        └─ Return 200</code></pre>
+    <p>Generating a new verification token via
+    <code>POST /api/v1/users/me/resend-verification</code> invalidates all previous unused
+    verification tokens for that user.</p>
+
+    <h2 id="password-reset">Password Reset</h2>
+    <pre><code class="language-text">Step 1 — Request:
+POST /api/v1/email/reset-password/request
+  {email}
+        │
+        ├─ Look up user (silently succeed even if not found — prevents enumeration)
+        ├─ Generate reset token (TTL 1h)
+        ├─ Send reset email (best-effort)
+        └─ Return 200 regardless
+
+Step 2 — Confirm:
+POST /api/v1/email/reset-password/confirm
+  {token, new_password}
+        │
+        ├─ Look up token (hash match, type="password_reset", unused, not expired)
+        ├─ Re-validate new_password against policy
+        │     └─ Validation failure → restore token as unused (user can retry)
+        ├─ Update password_hash
+        └─ Return 200</code></pre>
+
+    <h2 id="logout">Logout</h2>
+    <pre><code class="language-text">POST /api/v1/users/logout
+        │
+        ├─ Read access_token cookie → extract (jti, exp)
+        ├─ Read refresh_token cookie → extract (jti, exp)
+        ├─ For each: Redis SETEX "auth:bl:{jti}" remaining_ttl "1"
+        └─ Delete both cookies from browser (max_age=0)</code></pre>
+    <p>After logout, any subsequent request with the old cookies will fail at
+    <code>is_blacklisted(jti)</code> — even before the tokens naturally expire.</p>
+
+    <h2 id="middleware">AutoRefreshMiddleware</h2>
+    <p>Registered on the auth-service app. Intercepts every non-public request:</p>
+    <pre><code class="language-python">class AutoRefreshMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        if request.url.path in _PUBLIC_PATHS:
+            return await call_next(request)
+
+        # Access token still valid? Pass through.
+        access_token = request.cookies.get("access_token")
+        if access_token and self._is_valid_access_token(access_token):
+            return await call_next(request)
+
+        # Try refresh token
+        refresh_token = request.cookies.get("refresh_token")
+        user_id = self._validate_refresh_token(refresh_token)
+        if not user_id:
+            return await call_next(request)  # endpoint returns 401
+
+        # Issue new access token, inject into request + response
+        new_token = create_access_token(user_id)
+        # ... inject into request scope ...
+        response = await call_next(request)
+        response.set_cookie("access_token", new_token, ...)
+        return response</code></pre>
+
+    <p>Public paths that bypass the middleware:</p>
+    <pre><code class="language-python">_PUBLIC_PATHS = {
+    "/v1/users/login",
+    "/v1/users/register",
+    "/v1/users/refresh",
+    "/v1/email/verify",
+    "/v1/email/reset-password/request",
+    "/v1/email/reset-password/confirm",
+    "/health", "/docs", "/openapi.json", "/",
+}</code></pre>
+
+    <h2 id="token-blacklist">Token Blacklist</h2>
+    <p>See <a href="security.html#blacklist">Security Model → Token Blacklist</a> for full details.
+    The implementation lives in <code>services/auth-service/src/security/token_blacklist.py</code>.</p>
+
+    <h2 id="superadmin">Superadmin</h2>
+    <p>Users with <code>is_superadmin = true</code> bypass the regular privilege checks in
+    org-service and can access admin endpoints like <code>DELETE /users/admin/{user_id}</code>.
+    The flag is set directly in the database — there is no self-promotion endpoint.</p>
+    <pre><code class="language-sql">UPDATE users SET is_superadmin = TRUE WHERE email = 'admin@yourcompany.com';</code></pre>
+
+    <div class="callout danger">
+      <div class="callout-title">Superadmin is powerful</div>
+      <p>Keep the number of superadmins minimal. A superadmin can soft-delete any user without
+      a password confirmation. Audit all superadmin actions in production.</p>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-sql.min.js"></script>
+<script src="assets/nav.js"></script>
+</body>
+</html>

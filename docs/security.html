@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CyberCore Docs — Security Model</title>
+  <link rel="stylesheet" href="assets/style.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css"/>
+</head>
+<body>
+
+<header class="site-header">
+  <button class="hamburger" id="hamburger" aria-label="Toggle navigation">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+      <rect y="3" width="20" height="2" rx="1"/><rect y="9" width="20" height="2" rx="1"/><rect y="15" width="20" height="2" rx="1"/>
+    </svg>
+  </button>
+  <div class="logo">🛡️ Cyber<span>Core</span> <span class="version">v0.1.0</span></div>
+  <nav>
+    <a href="https://github.com/yourname/cybercore" target="_blank">GitHub</a>
+    <a href="getting-started.html">Quick Start</a>
+    <a href="api-auth.html">API</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="sidebar"><div id="nav-container"></div></aside>
+
+  <main class="content">
+    <h1>Security Model</h1>
+    <p class="lead">CyberCore is a security tool — its own security posture matters.
+    This page documents every security mechanism in the platform: authentication,
+    token management, RBAC, input validation, RCE prevention, and zip-bomb protection.</p>
+
+    <div class="toc">
+      <div class="toc-title">On this page</div>
+      <ul>
+        <li><a href="#jwt">JWT Architecture</a></li>
+        <li><a href="#cookies">Cookie Security</a></li>
+        <li><a href="#blacklist">Token Blacklist (Redis)</a></li>
+        <li><a href="#brute-force">Brute-Force Protection</a></li>
+        <li><a href="#rbac">RBAC — Roles &amp; Privileges</a></li>
+        <li><a href="#url-validation">Git URL Validation (RCE Prevention)</a></li>
+        <li><a href="#zip-security">ZIP Security (Zip-slip &amp; Zip-bomb)</a></li>
+        <li><a href="#upload-limits">Upload Limits</a></li>
+        <li><a href="#password-policy">Password Policy</a></li>
+        <li><a href="#email-tokens">Email Tokens</a></li>
+        <li><a href="#caching">Auth Cache Trade-offs</a></li>
+      </ul>
+    </div>
+
+    <h2 id="jwt">JWT Architecture</h2>
+    <p>CyberCore uses a dual-token strategy: a short-lived <strong>access token</strong> for
+    regular API calls, and a long-lived <strong>refresh token</strong> that issues new access
+    tokens transparently.</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Token</th><th>Lifetime</th><th>Cookie name</th><th>Cookie path</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Access token</td>
+            <td>15 min (configurable)</td>
+            <td><code>access_token</code></td>
+            <td><code>/</code></td>
+            <td>Sent on every request; proves identity</td>
+          </tr>
+          <tr>
+            <td>Refresh token</td>
+            <td>7 days (configurable)</td>
+            <td><code>refresh_token</code></td>
+            <td><code>/users/refresh</code></td>
+            <td>Issued new access tokens; path-restricted</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p><strong>Algorithm:</strong> HS256 (HMAC-SHA256). The secret is loaded from
+    <code>JWT_SECRET_KEY</code> — minimum 32 characters, enforced at startup.</p>
+
+    <h3>JWT Payload</h3>
+    <pre><code class="language-json">{
+  "sub":  "user-uuid-here",
+  "type": "access",          // "access" | "refresh"
+  "jti":  "random-uuid",     // JWT ID — used for revocation
+  "iat":  1715000000,         // issued at (Unix timestamp)
+  "exp":  1715000900          // expiry (Unix timestamp)
+}</code></pre>
+
+    <p>The <code>jti</code> field is a random UUID assigned at issue time. All required claims
+    (<code>sub</code>, <code>exp</code>, <code>iat</code>, <code>jti</code>, <code>type</code>)
+    are validated on every decode; missing claims raise 401.</p>
+
+    <h3>AutoRefreshMiddleware</h3>
+    <p>Registered on <strong>auth-service</strong>. Before every non-public request:</p>
+    <ol>
+      <li>If the access token is valid → pass through.</li>
+      <li>If expired → check the refresh token (browser sends it because path matches).</li>
+      <li>If refresh token is valid → issue a new access token, inject it into the request
+      scope (so the route handler sees it), and set it in the response cookie.</li>
+      <li>If no valid refresh token → pass through (route handler returns 401).</li>
+    </ol>
+    <p>This means clients never have to implement token refresh logic. Sessions last until
+    the refresh token expires (7 days) or the user explicitly logs out.</p>
+
+    <h2 id="cookies">Cookie Security</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Flag</th><th>Value</th><th>Effect</th></tr></thead>
+        <tbody>
+          <tr><td><code>HttpOnly</code></td><td>true</td><td>JavaScript cannot read the cookie. Blocks XSS-based token theft.</td></tr>
+          <tr><td><code>Secure</code></td><td>true</td><td>Cookie only sent over HTTPS. Blocks network interception.</td></tr>
+          <tr><td><code>SameSite</code></td><td>Lax</td><td>Cookie not sent on cross-site POST. Blocks CSRF attacks.</td></tr>
+          <tr><td><code>max_age</code></td><td>900 / 604800</td><td>Persistent cookie — survives browser close. User stays logged in.</td></tr>
+          <tr><td><code>path</code> (refresh)</td><td>/users/refresh</td><td>Browser only sends refresh token to the refresh endpoint.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warning">
+      <div class="callout-title">Secure flag in development</div>
+      <p>The <code>Secure</code> flag means cookies won't be sent over plain HTTP.
+      In local development without TLS, you may need to set up a local HTTPS proxy
+      (e.g. <code>mkcert</code>) or temporarily disable the Secure flag via env var.</p>
+    </div>
+
+    <h2 id="blacklist">Token Blacklist (Redis)</h2>
+    <p>When a user logs out (or their account is deleted), both token JTIs are blacklisted
+    immediately. Future requests with those tokens are rejected even before the tokens
+    naturally expire.</p>
+
+    <h3>Storage</h3>
+    <pre><code class="language-text">Redis DB 1 (separate from Celery on DB 0)
+Key:   auth:bl:{jti}
+Value: "1"
+TTL:   seconds until the token's natural expiry (exp - now)
+
+Redis automatically deletes the key when TTL expires — no cleanup job needed.</code></pre>
+
+    <h3>Fallback behaviour</h3>
+    <p>If Redis is unavailable, the blacklist falls back to an in-memory dict (original
+    behaviour). Revocations are honoured within the current process lifetime but lost on
+    restart. A warning is logged so operators know to fix the Redis connection.</p>
+
+    <h3>Checking a token</h3>
+    <pre><code class="language-python">def is_blacklisted(jti: str) -> bool:
+    r = _get_redis()
+    if r is not None:
+        return bool(r.exists(f"auth:bl:{jti}"))
+    return _fb_has(jti)   # in-memory fallback</code></pre>
+
+    <h2 id="brute-force">Brute-Force Protection</h2>
+    <p>The login endpoint tracks failed attempts per user in the database:</p>
+    <ul>
+      <li>Every wrong password increments <code>users.failed_login_attempts</code></li>
+      <li>After <strong>5 failures</strong>, <code>locked_until</code> is set to <code>now + 15 minutes</code></li>
+      <li>During lockout, all login attempts return 401 with a generic message</li>
+      <li>Successful login resets <code>failed_login_attempts = 0</code> and <code>locked_until = null</code></li>
+    </ul>
+    <p>Error messages are kept intentionally generic ("Invalid email or password") to prevent
+    user enumeration.</p>
+
+    <div class="callout info">
+      <div class="callout-title">Per-user lockout</div>
+      <p>Lockout is per user (not per IP), so an attacker can't DoS another user from
+      unlimited IPs. IP-based rate limiting should be added at the reverse proxy / CDN
+      layer for production deployments.</p>
+    </div>
+
+    <h2 id="rbac">RBAC — Roles &amp; Privileges</h2>
+    <p>Access control in organization-service uses a two-level model:</p>
+    <ol>
+      <li><strong>Role</strong> — named group of privileges (e.g. "Developer", "Security Lead")</li>
+      <li><strong>Privilege</strong> — named permission string (e.g. <code>scans.run</code>)</li>
+    </ol>
+
+    <h3>Privilege strings used by scan-service</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Privilege</th><th>Required for</th></tr></thead>
+        <tbody>
+          <tr><td><code>scans.run</code></td><td>Submit new scans (git or upload)</td></tr>
+          <tr><td><code>scans.view</code></td><td>List scans, view scan details, list findings</td></tr>
+          <tr><td><code>scans.manage</code></td><td>Cancel and delete scans</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Enforcement</h3>
+    <p>Each protected route declares its required privilege via the <code>require_org_privilege</code>
+    FastAPI dependency:</p>
+    <pre><code class="language-python">@router.post("/organizations/{slug}/scans/git")
+async def submit_git_scan(
+    slug: str,
+    _priv: None = require_org_privilege("scans.run"),  # ← enforced here
+):
+    ...</code></pre>
+    <p>The dependency fetches the user's privilege set from org-service (or from the 10s TTL
+    cache) and raises 403 if the required privilege is absent. Users with no membership in the
+    org get 403, not 404 — the org's existence is not leaked.</p>
+
+    <h2 id="url-validation">Git URL Validation — RCE Prevention</h2>
+    <p>The worker runs <code>git clone</code> with user-supplied URLs. Without validation,
+    this is a <strong>remote code execution</strong> vector — git supports dangerous transports
+    like <code>ext::</code> which execute arbitrary commands.</p>
+
+    <h3>Validation rules</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Check</th><th>Prevents</th></tr></thead>
+        <tbody>
+          <tr><td>Must be a string</td><td>Type confusion</td></tr>
+          <tr><td>Must not be empty</td><td>Null input</td></tr>
+          <tr><td>Must not start with <code>-</code></td><td>URL parsed as git option (<code>--upload-pack=cmd</code>)</td></tr>
+          <tr><td>No whitespace or control chars (ord &lt; 0x20)</td><td>Argument injection</td></tr>
+          <tr><td>Scheme must be <code>http</code>, <code>https</code>, or <code>git</code></td><td>Blocks <code>ext::</code>, <code>file://</code>, <code>ssh://</code>, scp-style</td></tr>
+          <tr><td>Hostname must match <code>^[A-Za-z0-9.\-]{1,255}$</code></td><td>IP literals, encoded chars, null bytes</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Clone command</h3>
+    <pre><code class="language-python">subprocess.run([
+    "git", "clone",
+    "--depth", "1",
+    "--single-branch",
+    "--",          # ← separates options from positional args
+    safe_url,      # ← already validated
+    str(dest),
+], env={**os.environ, "GIT_TERMINAL_PROMPT": "0"}, ...)</code></pre>
+    <p>The <code>--</code> separator ensures that even a bypassed URL validator cannot turn
+    the URL into a git flag. <code>GIT_TERMINAL_PROMPT=0</code> prevents the worker from
+    blocking indefinitely waiting for credentials on a private repo.</p>
+
+    <h2 id="zip-security">ZIP Security</h2>
+
+    <h3>Zip-slip (path traversal)</h3>
+    <p>A malicious ZIP can contain entries with paths like <code>../../etc/passwd</code> that
+    escape the extraction directory. CyberCore defends at two layers:</p>
+    <ol>
+      <li><strong>String check:</strong> Reject entries starting with <code>/</code> or <code>\</code>,
+      or containing <code>..</code> parts. Cheap O(1) pre-filter.</li>
+      <li><strong>Path resolution check:</strong> Resolve the full target path and call
+      <code>target.relative_to(dest_resolved)</code>. If the resolved path escapes the
+      extraction root, raise <code>RuntimeError</code>.</li>
+    </ol>
+    <pre><code class="language-python">target = (dest / info.filename).resolve()
+try:
+    target.relative_to(dest_resolved)
+except ValueError:
+    raise RuntimeError(f"ZIP rejected: entry escapes target '{info.filename}'")</code></pre>
+
+    <h3>Zip-bomb (decompression bomb)</h3>
+    <p>A ZIP may contain 1 MB of data that decompresses to 100 GB. CyberCore enforces two limits
+    before extracting:</p>
+    <ul>
+      <li><strong>Entry count:</strong> max 200,000 entries (configurable via <code>SCAN_ZIP_MAX_ENTRIES</code>)</li>
+      <li><strong>Total uncompressed size:</strong> max 5 GiB (configurable via <code>SCAN_ZIP_MAX_UNCOMPRESSED_BYTES</code>)</li>
+    </ul>
+    <p>Both are checked by iterating <code>ZipFile.infolist()</code> before any extraction happens.
+    Extraction only starts if both checks pass.</p>
+
+    <h2 id="upload-limits">Upload Limits</h2>
+    <p>File uploads (ZIP archives) are read in 1 MiB chunks. A running byte counter is checked
+    after each chunk:</p>
+    <pre><code class="language-python">while True:
+    chunk = await file.read(1 * 1024 * 1024)  # 1 MiB chunks
+    if not chunk:
+        break
+    written += len(chunk)
+    if written > MAX_UPLOAD_BYTES:             # default 500 MiB
+        # delete partial file, raise 413
+        ...</code></pre>
+    <p>This prevents a client from filling disk by sending more bytes than declared in
+    Content-Length, and avoids loading the entire file into memory before the size check runs.</p>
+
+    <h2 id="password-policy">Password Policy</h2>
+    <p>Validated at registration and password reset. A password is accepted only if it:</p>
+    <ul>
+      <li>Is at least <strong>12 characters</strong> long</li>
+      <li>Contains at least one <strong>uppercase</strong> letter</li>
+      <li>Contains at least one <strong>lowercase</strong> letter</li>
+      <li>Contains at least one <strong>digit</strong></li>
+      <li>Contains at least one <strong>special character</strong></li>
+      <li>Does <strong>not</strong> contain the user's full name or email</li>
+    </ul>
+    <p>Passwords are hashed with <strong>bcrypt</strong> before storage. The plaintext is never
+    logged or stored.</p>
+
+    <h2 id="email-tokens">Email Tokens (Verification &amp; Password Reset)</h2>
+    <p>Tokens sent in emails are generated with <code>secrets.token_urlsafe(48)</code>
+    (48 bytes → 64 URL-safe characters). Only the <strong>SHA-256 hash</strong> is stored
+    in the database — the plaintext is never persisted.</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Token type</th><th>TTL</th><th>One-time</th><th>Supersedes previous</th></tr></thead>
+        <tbody>
+          <tr><td>Email verification</td><td>24 hours</td><td>Yes</td><td>Yes</td></tr>
+          <tr><td>Password reset</td><td>1 hour</td><td>Yes</td><td>Yes</td></tr>
+          <tr><td>Org invite</td><td>—</td><td>—</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>When a new token is generated for a user, all previous unused tokens of the same type
+    are invalidated (<code>DELETE WHERE user_id = ? AND token_type = ? AND used_at IS NULL</code>).
+    This prevents token hoarding.</p>
+
+    <h2 id="caching">Auth Cache Trade-offs</h2>
+    <p>The scan-service caches identity and privilege lookups for 10 seconds to reduce
+    inter-service traffic. This introduces a staleness window:</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Cache</th><th>TTL</th><th>Staleness scenario</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>User identity (<code>user_cache</code>)</td>
+            <td>10 s</td>
+            <td>User logged out — scan-service may accept requests for up to 10 s</td>
+          </tr>
+          <tr>
+            <td>Privileges (<code>priv_cache</code>)</td>
+            <td>10 s</td>
+            <td>Role revoked — user retains access for up to 10 s</td>
+          </tr>
+          <tr>
+            <td>Slug→UUID (<code>org_id_cache</code>)</td>
+            <td>300 s</td>
+            <td>Org slug changed (rare) — old slug accepted for up to 5 min</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>These windows are intentionally short. The auth-service itself has no cache — the
+    access token is validated cryptographically on every call. The 10-second window primarily
+    protects against the dashboard's 3-second polling while a scan is active.</p>
+    <p>To change TTLs, set the corresponding env vars:
+    <code>SCAN_USER_CACHE_TTL_SECONDS</code>,
+    <code>SCAN_PRIV_CACHE_TTL_SECONDS</code>,
+    <code>SCAN_ORG_ID_CACHE_TTL_SECONDS</code>.</p>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+<script src="assets/nav.js"></script>
+</body>
+</html>

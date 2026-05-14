@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CyberCore Docs — Auth API</title>
+  <link rel="stylesheet" href="assets/style.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css"/>
+</head>
+<body>
+
+<header class="site-header">
+  <button class="hamburger" id="hamburger" aria-label="Toggle navigation">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+      <rect y="3" width="20" height="2" rx="1"/><rect y="9" width="20" height="2" rx="1"/><rect y="15" width="20" height="2" rx="1"/>
+    </svg>
+  </button>
+  <div class="logo">🛡️ Cyber<span>Core</span> <span class="version">v0.1.0</span></div>
+  <nav>
+    <a href="https://github.com/yourname/cybercore" target="_blank">GitHub</a>
+    <a href="getting-started.html">Quick Start</a>
+    <a href="api-auth.html">API</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="sidebar"><div id="nav-container"></div></aside>
+
+  <main class="content">
+    <h1>Auth API Reference</h1>
+    <p class="lead">All authentication and user management endpoints. Base URL: <code>http://localhost:8000/api/v1</code></p>
+
+    <div class="callout info">
+      <div class="callout-title">Cookie-based auth</div>
+      <p>All authentication uses httpOnly cookies — no Authorization header.
+      The browser sends cookies automatically. When using curl, save and reuse cookies with
+      <code>-c cookies.txt</code> (write) and <code>-b cookies.txt</code> (read).</p>
+    </div>
+
+    <!-- REGISTER -->
+    <div class="endpoint" id="register">
+      <div class="endpoint-header">
+        <span class="method post">POST</span>
+        <span class="endpoint-path">/users/register</span>
+        <span class="endpoint-summary">Create a new account</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Creates a new user account and sends a verification email. The user cannot log in
+        until they verify their email address.</p>
+        <h4>Request body</h4>
+        <div class="table-wrap"><table class="field-table">
+          <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>email</code></td><td class="field-type">string</td><td><span class="field-required">required</span></td><td>Valid email address; must be unique</td></tr>
+            <tr><td><code>full_name</code></td><td class="field-type">string</td><td><span class="field-required">required</span></td><td>First and last name</td></tr>
+            <tr><td><code>password</code></td><td class="field-type">string</td><td><span class="field-required">required</span></td><td>Min 12 chars; uppercase, lowercase, digit, special char required; cannot contain your name or email</td></tr>
+          </tbody>
+        </table></div>
+        <h4>Example</h4>
+        <pre><code class="language-bash">curl -X POST http://localhost:8000/api/v1/users/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "alice@example.com",
+    "full_name": "Alice Smith",
+    "password": "S3cur3P@ssw0rd!"
+  }'</code></pre>
+        <h4>Responses</h4>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Status</th><th>Body</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge green">201</span></td><td><code>{"message":"Account created successfully..."}</code></td></tr>
+            <tr><td><span class="badge yellow">409</span></td><td>Email already registered</td></tr>
+            <tr><td><span class="badge red">422</span></td><td>Validation error (weak password, invalid email, etc.)</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- LOGIN -->
+    <div class="endpoint" id="login">
+      <div class="endpoint-header">
+        <span class="method post">POST</span>
+        <span class="endpoint-path">/users/login</span>
+        <span class="endpoint-summary">Authenticate and receive session cookies</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Validates credentials and sets two httpOnly session cookies in the response.</p>
+        <h4>Request body</h4>
+        <div class="table-wrap"><table class="field-table">
+          <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>email</code></td><td class="field-type">string</td><td><span class="field-required">required</span></td><td></td></tr>
+            <tr><td><code>password</code></td><td class="field-type">string</td><td><span class="field-required">required</span></td><td></td></tr>
+          </tbody>
+        </table></div>
+        <h4>Example</h4>
+        <pre><code class="language-bash">curl -c cookies.txt -X POST http://localhost:8000/api/v1/users/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"alice@example.com","password":"S3cur3P@ssw0rd!"}'</code></pre>
+        <h4>Response cookies set</h4>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Cookie</th><th>Lifetime</th><th>Path</th></tr></thead>
+          <tbody>
+            <tr><td><code>access_token</code></td><td>15 minutes</td><td><code>/</code></td></tr>
+            <tr><td><code>refresh_token</code></td><td>7 days</td><td><code>/users/refresh</code></td></tr>
+          </tbody>
+        </table></div>
+        <h4>Responses</h4>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge green">200</span></td><td>Login successful; cookies set</td></tr>
+            <tr><td><span class="badge red">401</span></td><td>Invalid credentials (generic message — no enumeration)</td></tr>
+            <tr><td><span class="badge yellow">403</span></td><td>Email not verified yet</td></tr>
+          </tbody>
+        </table></div>
+        <div class="callout warning">
+          <div class="callout-title">Brute-force protection</div>
+          <p>5 failed attempts locks the account for 15 minutes. Lock state is stored per-user.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- LOGOUT -->
+    <div class="endpoint" id="logout">
+      <div class="endpoint-header">
+        <span class="method post">POST</span>
+        <span class="endpoint-path">/users/logout</span>
+        <span class="endpoint-summary">Invalidate session</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Blacklists both token JTIs in Redis and clears the session cookies. Any subsequent
+        request with the old cookies will be rejected immediately.</p>
+        <h4>Auth</h4><p>Requires active session (access_token cookie).</p>
+        <pre><code class="language-bash">curl -b cookies.txt -X POST http://localhost:8000/api/v1/users/logout</code></pre>
+        <h4>Responses</h4>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge green">200</span></td><td>Logged out; cookies cleared</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- REFRESH -->
+    <div class="endpoint" id="refresh">
+      <div class="endpoint-header">
+        <span class="method post">POST</span>
+        <span class="endpoint-path">/users/refresh</span>
+        <span class="endpoint-summary">Issue new access token from refresh token</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Validates the <code>refresh_token</code> cookie, blacklists the old refresh token,
+        and sets new access + refresh token cookies. Normally handled automatically by
+        <code>AutoRefreshMiddleware</code> — clients rarely need to call this directly.</p>
+        <h4>Auth</h4><p>Requires valid <code>refresh_token</code> cookie (path must match).</p>
+        <pre><code class="language-bash">curl -b cookies.txt -c cookies.txt -X POST http://localhost:8000/api/v1/users/refresh</code></pre>
+        <h4>Responses</h4>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge green">200</span></td><td>New cookies set</td></tr>
+            <tr><td><span class="badge red">401</span></td><td>No valid refresh token (expired or blacklisted)</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- ME -->
+    <div class="endpoint" id="me">
+      <div class="endpoint-header">
+        <span class="method get">GET</span>
+        <span class="endpoint-path">/users/me</span>
+        <span class="endpoint-summary">Get current user profile</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Returns the authenticated user's profile. This is the endpoint that other services
+        call (forwarding cookies) to resolve the current user ID.</p>
+        <pre><code class="language-bash">curl -b cookies.txt http://localhost:8000/api/v1/users/me</code></pre>
+        <h4>Response</h4>
+        <pre><code class="language-json">{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "email": "alice@example.com",
+  "full_name": "Alice Smith",
+  "email_verified": true,
+  "is_active": true,
+  "is_superadmin": false,
+  "mfa_enabled": false,
+  "last_login_at": "2026-05-14T09:00:00Z",
+  "created_at": "2026-01-01T00:00:00Z"
+}</code></pre>
+        <h4>Responses</h4>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge green">200</span></td><td>User object</td></tr>
+            <tr><td><span class="badge red">401</span></td><td>Not authenticated or token expired/blacklisted</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- RESEND VERIFY -->
+    <div class="endpoint" id="resend-verify">
+      <div class="endpoint-header">
+        <span class="method post">POST</span>
+        <span class="endpoint-path">/users/me/resend-verification</span>
+        <span class="endpoint-summary">Re-send verification email</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Generates a new email verification token (invalidates previous unused ones) and sends
+        a fresh verification email. Requires an active session.</p>
+        <h4>Responses</h4>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge green">200</span></td><td>Email sent</td></tr>
+            <tr><td><span class="badge red">400</span></td><td>Email already verified</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- DELETE ME -->
+    <div class="endpoint" id="delete-me">
+      <div class="endpoint-header">
+        <span class="method delete">DELETE</span>
+        <span class="endpoint-path">/users/me</span>
+        <span class="endpoint-summary">Soft-delete own account</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Soft-deletes the authenticated user's account. Requires the current password for
+        confirmation. Both session tokens are blacklisted immediately after deletion.</p>
+        <h4>Request body</h4>
+        <div class="table-wrap"><table class="field-table">
+          <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>password</code></td><td class="field-type">string</td><td><span class="field-required">required</span></td><td>Current password for confirmation</td></tr>
+          </tbody>
+        </table></div>
+        <h4>Responses</h4>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge green">200</span></td><td>Account deleted; cookies cleared</td></tr>
+            <tr><td><span class="badge red">401</span></td><td>Wrong password</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- VERIFY EMAIL -->
+    <div class="endpoint" id="verify-email">
+      <div class="endpoint-header">
+        <span class="method get">GET</span>
+        <span class="endpoint-path">/email/verify?token=TOKEN</span>
+        <span class="endpoint-summary">Verify email address</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Consumes the email verification token from the link sent during registration.
+        Tokens are single-use and expire after 24 hours.</p>
+        <h4>Query parameters</h4>
+        <div class="table-wrap"><table class="field-table">
+          <thead><tr><th>Param</th><th>Type</th><th>Required</th></tr></thead>
+          <tbody>
+            <tr><td><code>token</code></td><td class="field-type">string</td><td><span class="field-required">required</span></td></tr>
+          </tbody>
+        </table></div>
+        <h4>Responses</h4>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge green">200</span></td><td>Email verified</td></tr>
+            <tr><td><span class="badge red">400</span></td><td>Token invalid, expired, or already used</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- RESET REQUEST -->
+    <div class="endpoint" id="reset-request">
+      <div class="endpoint-header">
+        <span class="method post">POST</span>
+        <span class="endpoint-path">/email/reset-password/request</span>
+        <span class="endpoint-summary">Request a password reset email</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Always returns 200 regardless of whether the email is registered (prevents
+        user enumeration). If the email exists and the account is active, a reset link
+        is sent. The token expires in 1 hour.</p>
+        <h4>Request body</h4>
+        <div class="table-wrap"><table class="field-table">
+          <thead><tr><th>Field</th><th>Type</th><th>Required</th></tr></thead>
+          <tbody>
+            <tr><td><code>email</code></td><td class="field-type">string</td><td><span class="field-required">required</span></td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- RESET CONFIRM -->
+    <div class="endpoint" id="reset-confirm">
+      <div class="endpoint-header">
+        <span class="method post">POST</span>
+        <span class="endpoint-path">/email/reset-password/confirm</span>
+        <span class="endpoint-summary">Set new password using reset token</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Validates the reset token and updates the user's password. If the new password
+        fails validation, the token is restored as unused so the user can try again.</p>
+        <h4>Request body</h4>
+        <div class="table-wrap"><table class="field-table">
+          <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>token</code></td><td class="field-type">string</td><td><span class="field-required">required</span></td><td>Token from the reset email</td></tr>
+            <tr><td><code>new_password</code></td><td class="field-type">string</td><td><span class="field-required">required</span></td><td>Must pass the full password policy</td></tr>
+          </tbody>
+        </table></div>
+        <h4>Responses</h4>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge green">200</span></td><td>Password updated</td></tr>
+            <tr><td><span class="badge red">400</span></td><td>Token invalid/expired or password too weak</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- LOOKUP -->
+    <div class="endpoint" id="lookup">
+      <div class="endpoint-header">
+        <span class="method post">POST</span>
+        <span class="endpoint-path">/users/lookup</span>
+        <span class="endpoint-summary">Resolve user UUIDs to public profiles</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Batch-resolves up to 200 user UUIDs into public profile data. Used by other services
+        to display member names instead of raw UUIDs. Requires authentication.</p>
+        <h4>Request body</h4>
+        <pre><code class="language-json">{ "ids": ["uuid1", "uuid2", "uuid3"] }</code></pre>
+        <h4>Response</h4>
+        <pre><code class="language-json">[
+  { "id": "uuid1", "full_name": "Alice Smith", "email": "alice@example.com" },
+  { "id": "uuid2", "full_name": "Bob Jones",  "email": "bob@example.com" }
+]</code></pre>
+        <p>Unknown or soft-deleted IDs are silently skipped. Max 200 IDs per request.</p>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+<script src="assets/nav.js"></script>
+</body>
+</html>

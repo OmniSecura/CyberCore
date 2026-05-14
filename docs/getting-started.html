@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CyberCore Docs — Getting Started</title>
+  <link rel="stylesheet" href="assets/style.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css"/>
+</head>
+<body>
+
+<header class="site-header">
+  <button class="hamburger" id="hamburger" aria-label="Toggle navigation">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+      <rect y="3" width="20" height="2" rx="1"/><rect y="9" width="20" height="2" rx="1"/><rect y="15" width="20" height="2" rx="1"/>
+    </svg>
+  </button>
+  <div class="logo">🛡️ Cyber<span>Core</span> <span class="version">v0.1.0</span></div>
+  <nav>
+    <a href="https://github.com/yourname/cybercore" target="_blank">GitHub</a>
+    <a href="getting-started.html">Quick Start</a>
+    <a href="api-auth.html">API</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="sidebar"><div id="nav-container"></div></aside>
+
+  <main class="content">
+    <h1>Getting Started</h1>
+    <p class="lead">Run CyberCore locally in under 10 minutes. This guide covers prerequisites,
+    service setup, first login, creating an organisation, and running your first scan.</p>
+
+    <div class="toc">
+      <div class="toc-title">On this page</div>
+      <ul>
+        <li><a href="#prerequisites">Prerequisites</a></li>
+        <li><a href="#running-services">Running the Services</a></li>
+        <li><a href="#port-map">Port Map</a></li>
+        <li><a href="#env-vars">Environment Variables</a></li>
+        <li><a href="#first-steps">First Steps</a></li>
+        <li><a href="#first-scan">Running Your First Scan</a></li>
+      </ul>
+    </div>
+
+    <h2 id="prerequisites">Prerequisites</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Tool</th><th>Minimum Version</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Python</td><td>3.11</td><td>For all backend services and the scan worker</td></tr>
+          <tr><td>Node.js</td><td>18</td><td>For the React dashboard</td></tr>
+          <tr><td>MySQL</td><td>8.0</td><td>Primary database; create a database named <code>cybercore</code></td></tr>
+          <tr><td>Redis</td><td>7</td><td>Celery broker + result backend + token blacklist</td></tr>
+          <tr><td>Git</td><td>any</td><td>Required by the scan worker to clone target repos</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warning">
+      <div class="callout-title">SAST Tool Dependencies</div>
+      <p>The scan worker invokes external binaries. Install whichever you need:</p>
+      <ul>
+        <li><strong>Bandit</strong> — <code>pip install bandit</code></li>
+        <li><strong>Semgrep</strong> — <code>pip install semgrep</code></li>
+        <li><strong>Gitleaks</strong> — <a href="https://github.com/gitleaks/gitleaks/releases" target="_blank">download binary</a></li>
+        <li><strong>Trivy</strong> — <a href="https://trivy.dev/latest/getting-started/installation/" target="_blank">install guide</a></li>
+        <li><strong>Hadolint</strong> — <a href="https://github.com/hadolint/hadolint/releases" target="_blank">download binary</a></li>
+        <li><strong>gosec</strong> — <code>go install github.com/securego/gosec/v2/cmd/gosec@latest</code></li>
+      </ul>
+      <p>Missing tools are <strong>skipped silently</strong> — you don't need all of them to run scans.</p>
+    </div>
+
+    <h2 id="running-services">Running the Services</h2>
+
+    <div class="callout success">
+      <div class="callout-title">Docker — recommended for the full stack</div>
+      <p>To start every service, database, and the dashboard with a single command, use Docker Compose:</p>
+      <pre><code class="language-bash">cp .env.example .env   # fill in JWT_SECRET_KEY and DB passwords
+docker compose up --build -d</code></pre>
+      <p>See the <a href="deployment-docker.html">Docker &amp; Deployment</a> page for the full guide,
+      environment variable reference, and production notes.</p>
+    </div>
+
+    <p>Or run each service directly as an independent Python process (separate terminals):</p>
+
+    <h3>1. Auth Service</h3>
+    <pre><code class="language-bash">cd services/auth-service
+pip install -r requirements.txt
+# Set required env vars (see below)
+python start_service.py
+# Runs on http://localhost:8000</code></pre>
+
+    <h3>2. Organization Service</h3>
+    <pre><code class="language-bash">cd services/organization-service
+pip install -r requirements.txt
+python start_service.py
+# Runs on http://localhost:8081</code></pre>
+
+    <h3>3. Scan Service</h3>
+    <pre><code class="language-bash">cd services/scan-service
+pip install -r requirements.txt
+python start_service.py
+# Runs on http://localhost:8082</code></pre>
+
+    <h3>4. Scan Worker (Celery)</h3>
+    <pre><code class="language-bash">cd workers/scan-worker
+pip install -r requirements.txt
+celery -A src.celery_app worker -Q sast --loglevel=info
+# Picks up scan tasks from Redis</code></pre>
+
+    <h3>5. Dashboard</h3>
+    <pre><code class="language-bash">cd dashboard
+npm install
+npm run dev
+# Runs on http://localhost:3000
+# Automatically proxies API calls to the backend services</code></pre>
+
+    <div class="callout info">
+      <div class="callout-title">Create Tables First</div>
+      <p>Set <code>DB_CREATE_TABLES=true</code> the first time you run each service to let
+      SQLAlchemy create the schema. Use the SQL files in <code>database/sql/tables/</code>
+      for production — they include comments, constraints, and indexes that SQLAlchemy's
+      <code>create_all()</code> may handle differently.</p>
+    </div>
+
+    <h2 id="port-map">Port Map</h2>
+    <div class="table-wrap">
+      <table class="port-table">
+        <thead><tr><th>Service</th><th>Port</th><th>URL prefix handled by Vite proxy</th></tr></thead>
+        <tbody>
+          <tr><td>Dashboard (Vite)</td><td>:3000</td><td>—</td></tr>
+          <tr><td>Auth Service</td><td>:8000</td><td><code>/api/v1/users/**</code>, <code>/api/v1/email/**</code></td></tr>
+          <tr><td>Organization Service</td><td>:8081</td><td><code>/api/v1/organizations/**</code>, <code>/api/v1/invites/**</code></td></tr>
+          <tr><td>Scan Service</td><td>:8082</td><td><code>/api/v1/scans/**</code></td></tr>
+          <tr><td>MySQL</td><td>:3306</td><td>—</td></tr>
+          <tr><td>Redis</td><td>:6379</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>The Vite proxy (configured in <code>dashboard/vite.config.js</code>) routes requests
+    transparently — the browser always talks to <code>localhost:3000</code> and never needs
+    to know the backend ports.</p>
+
+    <h2 id="env-vars">Environment Variables</h2>
+    <p>Each service reads configuration from environment variables. All have sensible defaults
+    for local development except <code>JWT_SECRET_KEY</code> which is required.</p>
+
+    <h3>Auth Service</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Variable</th><th>Default</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>JWT_SECRET_KEY</code></td><td><em>required</em></td><td>HS256 signing secret — minimum 32 characters. Generate: <code>openssl rand -hex 32</code></td></tr>
+          <tr><td><code>ACCESS_TOKEN_EXPIRE_MINUTES</code></td><td><code>15</code></td><td>Access token lifetime in minutes</td></tr>
+          <tr><td><code>REFRESH_TOKEN_EXPIRE_DAYS</code></td><td><code>7</code></td><td>Refresh token lifetime in days</td></tr>
+          <tr><td><code>REDIS_URL</code></td><td><code>redis://localhost:6379/1</code></td><td>Redis for the token blacklist (DB 1 — separate from Celery on DB 0)</td></tr>
+          <tr><td><code>DB_URL</code></td><td><code>mysql+pymysql://root:root@localhost/cybercore</code></td><td>MySQL connection string</td></tr>
+          <tr><td><code>DB_CREATE_TABLES</code></td><td><code>false</code></td><td>Set to <code>true</code> on first run to auto-create schema</td></tr>
+          <tr><td><code>ALLOWED_ORIGINS</code></td><td><code>http://localhost:3000</code></td><td>CORS allowed origins (comma-separated)</td></tr>
+          <tr><td><code>SMTP_HOST</code></td><td>—</td><td>SMTP server for email delivery</td></tr>
+          <tr><td><code>SMTP_PORT</code></td><td><code>587</code></td><td>SMTP port</td></tr>
+          <tr><td><code>SMTP_USER</code></td><td>—</td><td>SMTP username</td></tr>
+          <tr><td><code>SMTP_PASSWORD</code></td><td>—</td><td>SMTP password</td></tr>
+          <tr><td><code>EMAIL_FROM</code></td><td>—</td><td>From address for outbound emails</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Organization Service</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Variable</th><th>Default</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>DB_URL</code></td><td><code>mysql+pymysql://root:root@localhost/cybercore</code></td><td>MySQL connection string</td></tr>
+          <tr><td><code>AUTH_SERVICE_URL</code></td><td><code>http://localhost:8000</code></td><td>Auth service base URL (used to validate JWTs)</td></tr>
+          <tr><td><code>DB_CREATE_TABLES</code></td><td><code>false</code></td><td>Auto-create schema on startup</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Scan Service</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Variable</th><th>Default</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>DB_URL</code></td><td><code>mysql+pymysql://root:root@localhost/cybercore</code></td><td>MySQL connection string</td></tr>
+          <tr><td><code>CELERY_BROKER_URL</code></td><td><code>redis://localhost:6379/0</code></td><td>Redis broker for Celery tasks</td></tr>
+          <tr><td><code>CELERY_RESULT_BACKEND</code></td><td><code>redis://localhost:6379/0</code></td><td>Redis result backend</td></tr>
+          <tr><td><code>ORG_SERVICE_URL</code></td><td><code>http://localhost:8081</code></td><td>Organization service URL (privilege checks)</td></tr>
+          <tr><td><code>AUTH_SERVICE_URL</code></td><td><code>http://localhost:8000</code></td><td>Auth service URL (user identity)</td></tr>
+          <tr><td><code>SCAN_UPLOAD_DIR</code></td><td><code>/tmp/cybercore/uploads</code></td><td>Directory where uploaded ZIPs are stored</td></tr>
+          <tr><td><code>SCAN_UPLOAD_MAX_BYTES</code></td><td><code>524288000</code> (500 MiB)</td><td>Maximum upload file size</td></tr>
+          <tr><td><code>SCAN_FREE_PLAN_ACTIVE_LIMIT</code></td><td><code>3</code></td><td>Max concurrent active scans per org</td></tr>
+          <tr><td><code>SCAN_FREE_PLAN_DAILY_LIMIT</code></td><td><code>3</code></td><td>Max scans per org per 24 hours</td></tr>
+          <tr><td><code>SCAN_USER_CACHE_TTL_SECONDS</code></td><td><code>10</code></td><td>TTL for cached user identity lookups</td></tr>
+          <tr><td><code>SCAN_PRIV_CACHE_TTL_SECONDS</code></td><td><code>10</code></td><td>TTL for cached privilege lookups</td></tr>
+          <tr><td><code>SCAN_ORG_ID_CACHE_TTL_SECONDS</code></td><td><code>300</code></td><td>TTL for cached slug→UUID lookups</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Scan Worker</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Variable</th><th>Default</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>CELERY_BROKER_URL</code></td><td><code>redis://localhost:6379/0</code></td><td>Must match scan-service</td></tr>
+          <tr><td><code>CELERY_RESULT_BACKEND</code></td><td><code>redis://localhost:6379/0</code></td><td>Must match scan-service</td></tr>
+          <tr><td><code>DB_URL</code></td><td><code>mysql+pymysql://root:root@localhost/cybercore</code></td><td>Same database as scan-service</td></tr>
+          <tr><td><code>SCAN_WORKSPACE_DIR</code></td><td><code>/tmp/cybercore/scans</code></td><td>Temp directory for clones and zip extractions</td></tr>
+          <tr><td><code>SCAN_UPLOAD_DIR</code></td><td><code>/tmp/cybercore/uploads</code></td><td>Must match scan-service upload dir</td></tr>
+          <tr><td><code>SCAN_ZIP_MAX_UNCOMPRESSED_BYTES</code></td><td><code>5368709120</code> (5 GiB)</td><td>Zip-bomb limit</td></tr>
+          <tr><td><code>SCAN_ZIP_MAX_ENTRIES</code></td><td><code>200000</code></td><td>Zip entry count limit</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="first-steps">First Steps After Launch</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h3>Register an account</h3>
+          <p>Open <strong>http://localhost:3000/register</strong> and fill in your email, full name,
+          and a password that meets the policy (12+ chars, uppercase, lowercase, number, special character).
+          You'll receive a verification email — click the link before you can log in.</p>
+          <div class="callout info">
+            <div class="callout-title">Local email</div>
+            <p>Without SMTP configured, the verification token is printed to the
+            auth-service console log. Copy the token and visit
+            <code>/verify-email?token=YOUR_TOKEN</code> manually.</p>
+          </div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h3>Log in</h3>
+          <p>After email verification, log in at <strong>http://localhost:3000/login</strong>.
+          The server sets two httpOnly cookies: a 15-minute <code>access_token</code> and a
+          7-day <code>refresh_token</code>. These are renewed automatically — you won't be
+          logged out unless you explicitly click Logout.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <h3>Create an Organisation</h3>
+          <p>On the dashboard, click <strong>Create Organisation</strong>. Pick a name and a unique
+          slug (URL-friendly identifier, e.g. <code>my-company</code>). You become the Owner
+          automatically and get all privileges.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <h3>Run Your First Scan</h3>
+          <p>Navigate to the <strong>Scans</strong> tab in your organisation. Choose
+          <strong>Scan Git Repo</strong> and enter a public repository URL, or
+          <strong>Upload ZIP</strong> to scan local code. The scan is queued immediately
+          and picked up by the worker within seconds.</p>
+        </div>
+      </div>
+    </div>
+
+    <h2 id="first-scan">Running Your First Scan via API</h2>
+    <p>If you prefer curl:</p>
+    <pre><code class="language-bash"># 1. Login (saves cookies to file)
+curl -c cookies.txt -X POST http://localhost:8000/api/v1/users/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com","password":"YourP@ssword1"}'
+
+# 2. Submit a git scan
+curl -b cookies.txt -X POST \
+  http://localhost:8082/api/v1/scans/organizations/my-company/scans/git \
+  -H "Content-Type: application/json" \
+  -d '{"name":"My first scan","target_url":"https://github.com/owner/repo"}'
+# Returns: {"id":"...","status":"queued",...}
+
+# 3. Poll for results
+curl -b cookies.txt \
+  http://localhost:8082/api/v1/scans/organizations/my-company/scans/JOB_ID
+
+# 4. Retrieve findings (when status = completed)
+curl -b cookies.txt \
+  "http://localhost:8082/api/v1/scans/organizations/my-company/scans/JOB_ID/findings?limit=50"</code></pre>
+
+    <div class="callout success">
+      <div class="callout-title">You're all set!</div>
+      <p>Head to the <a href="architecture.html">Architecture page</a> to understand how all
+      the pieces fit together, or jump straight to the
+      <a href="api-scans.html">Scans API reference</a>.</p>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+<script src="assets/nav.js"></script>
+</body>
+</html>

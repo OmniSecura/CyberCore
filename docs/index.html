@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CyberCore Docs — Introduction</title>
+  <link rel="stylesheet" href="assets/style.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css"/>
+</head>
+<body>
+
+<header class="site-header">
+  <button class="hamburger" id="hamburger" aria-label="Toggle navigation">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+      <rect y="3" width="20" height="2" rx="1"/><rect y="9" width="20" height="2" rx="1"/><rect y="15" width="20" height="2" rx="1"/>
+    </svg>
+  </button>
+  <div class="logo">🛡️ Cyber<span>Core</span> <span class="version">v0.1.0</span></div>
+  <nav>
+    <a href="https://github.com/yourname/cybercore" target="_blank">GitHub</a>
+    <a href="getting-started.html">Quick Start</a>
+    <a href="api-auth.html">API</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="sidebar"><div id="nav-container"></div></aside>
+
+  <main class="content">
+    <h1>CyberCore Documentation</h1>
+    <p class="lead">
+      Open-source, self-hosted cybersecurity platform. Static code analysis, secrets detection,
+      dependency CVE scanning, and centralized organization management — all under one roof,
+      on your own infrastructure.
+    </p>
+
+    <div class="callout info">
+      <div class="callout-title">🚧 Active Development</div>
+      <p>CyberCore is in active development. APIs may change between minor versions.
+         Pin your deployments and watch the changelog.</p>
+    </div>
+
+    <h2>What is CyberCore?</h2>
+    <p>
+      CyberCore is a modular security platform that lets your team run professional-grade
+      security tooling without sending your source code or vulnerability data to a third party.
+      Think of it as your own private security operations center (SOC), deployable in minutes
+      via Docker or Kubernetes.
+    </p>
+    <p>
+      The platform is built from independent microservices. You can run the entire stack,
+      or only the pieces you need. Each service exposes a versioned REST API and communicates
+      with the others over HTTP — no shared database, no tight coupling.
+    </p>
+
+    <h2>Core Capabilities</h2>
+    <div class="card-grid">
+      <a class="card" href="service-scan.html">
+        <div class="card-icon">🔬</div>
+        <div class="card-title">SAST Scanning</div>
+        <div class="card-desc">Static code analysis across Python, Go, JavaScript/TypeScript, and more using 8 open-source tools.</div>
+      </a>
+      <a class="card" href="service-auth.html">
+        <div class="card-icon">🔐</div>
+        <div class="card-title">Auth Service</div>
+        <div class="card-desc">JWT + refresh token auth with email verification, password reset, brute-force protection, and MFA.</div>
+      </a>
+      <a class="card" href="service-organizations.html">
+        <div class="card-icon">🏢</div>
+        <div class="card-title">Organizations</div>
+        <div class="card-desc">Multi-tenant organization management with role-based access control and fine-grained privileges.</div>
+      </a>
+      <a class="card" href="workers-sast.html">
+        <div class="card-icon">⚙️</div>
+        <div class="card-title">Async Workers</div>
+        <div class="card-desc">Celery-based scan worker runs security tools in the background, deduplicates findings, and persists results.</div>
+      </a>
+      <a class="card" href="security.html">
+        <div class="card-icon">🛡️</div>
+        <div class="card-title">Security Model</div>
+        <div class="card-desc">httpOnly cookies, Redis-backed token blacklist, zip-bomb protection, RCE prevention, and RBAC.</div>
+      </a>
+      <a class="card" href="database-schema.html">
+        <div class="card-icon">🗄️</div>
+        <div class="card-title">Database Schema</div>
+        <div class="card-desc">MySQL 8.0 schema with soft deletes, audit columns, composite indexes, and UNIQUE constraints.</div>
+      </a>
+    </div>
+
+    <h2>Services at a Glance</h2>
+    <div class="table-wrap">
+      <table class="port-table">
+        <thead>
+          <tr>
+            <th>Service</th>
+            <th>Default Port</th>
+            <th>Responsibility</th>
+            <th>Tech</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>auth-service</strong></td>
+            <td>:8000</td>
+            <td>User accounts, JWT tokens, email flows</td>
+            <td>FastAPI + MySQL + Redis</td>
+          </tr>
+          <tr>
+            <td><strong>organization-service</strong></td>
+            <td>:8081</td>
+            <td>Orgs, roles, privileges, member management</td>
+            <td>FastAPI + MySQL</td>
+          </tr>
+          <tr>
+            <td><strong>scan-service</strong></td>
+            <td>:8082</td>
+            <td>Scan job orchestration, findings API</td>
+            <td>FastAPI + MySQL + Redis/Celery</td>
+          </tr>
+          <tr>
+            <td><strong>scan-worker</strong></td>
+            <td>—</td>
+            <td>Runs SAST tools asynchronously</td>
+            <td>Celery + Python security tools</td>
+          </tr>
+          <tr>
+            <td><strong>dashboard</strong></td>
+            <td>:3000</td>
+            <td>React SPA frontend</td>
+            <td>React 18 + Vite</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Tech Stack</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Layer</th><th>Technology</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td>Backend</td><td>Python 3.11+ / FastAPI</td><td>All microservices</td></tr>
+          <tr><td>ORM</td><td>SQLAlchemy 2.0</td><td>Database access</td></tr>
+          <tr><td>Task queue</td><td>Celery 5 + Redis</td><td>Async scan execution</td></tr>
+          <tr><td>Database</td><td>MySQL 8.0</td><td>Primary data store</td></tr>
+          <tr><td>Cache / Broker</td><td>Redis 7</td><td>Celery broker, token blacklist, result backend</td></tr>
+          <tr><td>Frontend</td><td>React 18 + Vite</td><td>Dashboard SPA</td></tr>
+          <tr><td>Auth tokens</td><td>JWT (HS256)</td><td>Stateless access tokens</td></tr>
+          <tr><td>SAST tools</td><td>Bandit, Semgrep, Gitleaks, Trivy, Hadolint, pip-audit, npm audit, gosec</td><td>Security scanning</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Request Flow</h2>
+    <p>Every API request from the dashboard goes through this chain:</p>
+    <pre><code class="language-text">Browser
+  │
+  ├── Vite dev proxy (port 3000)    ← routes by URL prefix
+  │
+  ├─► auth-service  (:8000)         ← /api/v1/users/**
+  │       └── MySQL (users, user_tokens)
+  │       └── Redis (token blacklist DB 1)
+  │
+  ├─► org-service   (:8081)         ← /api/v1/organizations/**
+  │       └── MySQL (organizations, roles, members)
+  │       └── auth-service (validates JWT on each request)
+  │
+  └─► scan-service  (:8082)         ← /api/v1/scans/**
+          └── MySQL (scan_jobs, scan_findings)
+          └── org-service  (privilege check)
+          └── auth-service (user identity)
+          └── Redis → scan-worker   (Celery task queue)</code></pre>
+
+    <h2>Next Steps</h2>
+    <div class="card-grid">
+      <a class="card" href="getting-started.html">
+        <div class="card-icon">🚀</div>
+        <div class="card-title">Getting Started</div>
+        <div class="card-desc">Run the stack locally in under 5 minutes.</div>
+      </a>
+      <a class="card" href="architecture.html">
+        <div class="card-icon">🏗️</div>
+        <div class="card-title">Architecture</div>
+        <div class="card-desc">Deep dive into service boundaries, data flow, and design decisions.</div>
+      </a>
+      <a class="card" href="api-scans.html">
+        <div class="card-icon">📡</div>
+        <div class="card-title">Scans API</div>
+        <div class="card-desc">Submit scans, poll results, and retrieve findings via REST.</div>
+      </a>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="assets/nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CyberCore Docs — Organizations API</title>
+  <link rel="stylesheet" href="assets/style.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css"/>
+</head>
+<body>
+
+<header class="site-header">
+  <button class="hamburger" id="hamburger" aria-label="Toggle navigation">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+      <rect y="3" width="20" height="2" rx="1"/><rect y="9" width="20" height="2" rx="1"/><rect y="15" width="20" height="2" rx="1"/>
+    </svg>
+  </button>
+  <div class="logo">🛡️ Cyber<span>Core</span> <span class="version">v0.1.0</span></div>
+  <nav>
+    <a href="https://github.com/yourname/cybercore" target="_blank">GitHub</a>
+    <a href="getting-started.html">Quick Start</a>
+    <a href="api-auth.html">API</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="sidebar"><div id="nav-container"></div></aside>
+
+  <main class="content">
+    <h1>Organizations API Reference</h1>
+    <p class="lead">Endpoints for managing organisations, roles, and members.
+    Base URL: <code>http://localhost:8081/api/v1</code></p>
+
+    <div class="callout info">
+      <div class="callout-title">Auth required</div>
+      <p>All endpoints require an authenticated session. The service validates identity by
+      forwarding your cookies to auth-service on each request.</p>
+    </div>
+
+    <h2>Organisations</h2>
+
+    <!-- CREATE ORG -->
+    <div class="endpoint" id="create-org">
+      <div class="endpoint-header">
+        <span class="method post">POST</span>
+        <span class="endpoint-path">/organizations/</span>
+        <span class="endpoint-summary">Create an organisation</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Creates a new organisation. The authenticated user becomes the Owner automatically.</p>
+        <h4>Request body</h4>
+        <div class="table-wrap"><table class="field-table">
+          <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>name</code></td><td class="field-type">string</td><td><span class="field-required">required</span></td><td>Human-readable organisation name</td></tr>
+            <tr><td><code>slug</code></td><td class="field-type">string</td><td><span class="field-required">required</span></td><td>URL-friendly, globally unique, lowercase, e.g. <code>my-company</code></td></tr>
+          </tbody>
+        </table></div>
+        <pre><code class="language-bash">curl -b cookies.txt -X POST http://localhost:8081/api/v1/organizations/ \
+  -H "Content-Type: application/json" \
+  -d '{"name": "ACME Corp", "slug": "acme-corp"}'</code></pre>
+        <h4>Responses</h4>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge green">201</span></td><td>Organisation created</td></tr>
+            <tr><td><span class="badge yellow">409</span></td><td>Slug already taken</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- LIST MY ORGS -->
+    <div class="endpoint" id="list-orgs">
+      <div class="endpoint-header">
+        <span class="method get">GET</span>
+        <span class="endpoint-path">/organizations/my</span>
+        <span class="endpoint-summary">List organisations I belong to</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Returns a paginated list of all organisations where the current user is a member,
+        with their role and member count in each.</p>
+        <h4>Query parameters</h4>
+        <div class="table-wrap"><table class="field-table">
+          <thead><tr><th>Param</th><th>Type</th><th>Default</th></tr></thead>
+          <tbody>
+            <tr><td><code>page</code></td><td class="field-type">int</td><td>1</td></tr>
+            <tr><td><code>page_size</code></td><td class="field-type">int</td><td>20 (max 100)</td></tr>
+          </tbody>
+        </table></div>
+        <h4>Response</h4>
+        <pre><code class="language-json">{
+  "total": 2,
+  "page": 1,
+  "page_size": 20,
+  "total_pages": 1,
+  "items": [
+    {
+      "id": "org-uuid",
+      "name": "ACME Corp",
+      "organization_slug": "acme-corp",
+      "role": "Owner",
+      "member_count": 5,
+      "created_at": "2026-01-01T00:00:00Z"
+    }
+  ]
+}</code></pre>
+      </div>
+    </div>
+
+    <!-- GET ORG -->
+    <div class="endpoint" id="get-org">
+      <div class="endpoint-header">
+        <span class="method get">GET</span>
+        <span class="endpoint-path">/organizations/{slug}</span>
+        <span class="endpoint-summary">Get organisation details</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Returns a single organisation. The caller must be a member. Returns 404 if the
+        org doesn't exist or the user is not a member (membership is not leaked).</p>
+        <h4>Responses</h4>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge green">200</span></td><td>Organisation object with role and member count</td></tr>
+            <tr><td><span class="badge red">404</span></td><td>Not found or not a member</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- UPDATE ORG -->
+    <div class="endpoint" id="update-org">
+      <div class="endpoint-header">
+        <span class="method patch">PATCH</span>
+        <span class="endpoint-path">/organizations/{slug}</span>
+        <span class="endpoint-summary">Update organisation settings</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Update the org's name or slug. Requires <code>org.settings</code> privilege.</p>
+        <h4>Request body (all fields optional)</h4>
+        <div class="table-wrap"><table class="field-table">
+          <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>name</code></td><td class="field-type">string</td><td>New display name</td></tr>
+            <tr><td><code>slug</code></td><td class="field-type">string</td><td>New URL slug; must be globally unique</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- DELETE ORG -->
+    <div class="endpoint" id="delete-org">
+      <div class="endpoint-header">
+        <span class="method delete">DELETE</span>
+        <span class="endpoint-path">/organizations/{slug}</span>
+        <span class="endpoint-summary">Soft-delete an organisation</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Soft-deletes the organisation. Only the Owner can do this. The slug is freed.
+        All data is preserved and can be restored via <code>/reactivate</code>.</p>
+        <h4>Responses</h4>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge green">200</span></td><td>Deleted</td></tr>
+            <tr><td><span class="badge red">403</span></td><td>Not the Owner</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- TRANSFER -->
+    <div class="endpoint" id="transfer">
+      <div class="endpoint-header">
+        <span class="method patch">PATCH</span>
+        <span class="endpoint-path">/organizations/{slug}/transfer-ownership</span>
+        <span class="endpoint-summary">Initiate ownership transfer</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Step 1 of the two-step ownership transfer. Sends an email to the recipient.
+        Only the Owner can initiate. The recipient must already be a member.</p>
+        <h4>Request body</h4>
+        <div class="table-wrap"><table class="field-table">
+          <thead><tr><th>Field</th><th>Type</th><th>Required</th></tr></thead>
+          <tbody>
+            <tr><td><code>new_owner_id</code></td><td class="field-type">string (UUID)</td><td><span class="field-required">required</span></td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- ACCEPT TRANSFER -->
+    <div class="endpoint" id="accept-transfer">
+      <div class="endpoint-header">
+        <span class="method post">POST</span>
+        <span class="endpoint-path">/organizations/transfer-ownership/accept</span>
+        <span class="endpoint-summary">Accept ownership transfer</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Step 2 of ownership transfer. The recipient calls this with the token from
+        their email. Token is single-use; previous owner's role changes to Member.</p>
+        <h4>Request body</h4>
+        <div class="table-wrap"><table class="field-table">
+          <thead><tr><th>Field</th><th>Type</th><th>Required</th></tr></thead>
+          <tbody>
+            <tr><td><code>token</code></td><td class="field-type">string</td><td><span class="field-required">required</span></td></tr>
+          </tbody>
+        </table></div>
+        <h4>Responses</h4>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge green">200</span></td><td>Ownership transferred; returns new slug/name</td></tr>
+            <tr><td><span class="badge red">404</span></td><td>Token not found</td></tr>
+            <tr><td><span class="badge red">410</span></td><td>Token expired</td></tr>
+            <tr><td><span class="badge red">403</span></td><td>Not the intended recipient</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- REACTIVATE -->
+    <div class="endpoint" id="reactivate">
+      <div class="endpoint-header">
+        <span class="method post">POST</span>
+        <span class="endpoint-path">/organizations/{org_id}/reactivate</span>
+        <span class="endpoint-summary">Reactivate a deleted organisation</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Restores a soft-deleted organisation. Use the org's UUID (not slug — slug may have
+        been freed). Only the original Owner can reactivate.</p>
+        <h4>Request body</h4>
+        <div class="table-wrap"><table class="field-table">
+          <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>new_slug</code></td><td class="field-type">string</td><td><span class="field-optional">optional</span></td><td>Required only if the original slug was claimed after deletion</td></tr>
+          </tbody>
+        </table></div>
+        <h4>Responses</h4>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge green">200</span></td><td>Reactivated; returns current slug</td></tr>
+            <tr><td><span class="badge yellow">409</span></td><td>New slug is already taken</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <h2>Roles &amp; Privileges</h2>
+
+    <!-- LIST PRIVILEGES -->
+    <div class="endpoint" id="list-privileges">
+      <div class="endpoint-header">
+        <span class="method get">GET</span>
+        <span class="endpoint-path">/organizations/roles/privileges</span>
+        <span class="endpoint-summary">List all available privileges</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Returns the full privilege registry grouped by category. Used by the role
+        editor UI to display available privileges. No auth required.</p>
+        <pre><code class="language-json">{
+  "scans": ["scans.run", "scans.view", "scans.manage"],
+  "members": ["members.view", "members.invite", "members.remove"],
+  "roles": ["roles.view", "roles.manage"],
+  "organisation": ["org.settings"]
+}</code></pre>
+      </div>
+    </div>
+
+    <!-- MY PRIVILEGES -->
+    <div class="endpoint" id="my-privileges">
+      <div class="endpoint-header">
+        <span class="method get">GET</span>
+        <span class="endpoint-path">/organizations/roles/{slug}/my-privileges</span>
+        <span class="endpoint-summary">Get my privileges in an org</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Returns the set of privileges the current user holds in the organisation.
+        Called by scan-service (and other services) to enforce access control.</p>
+        <pre><code class="language-json">{ "privileges": ["scans.run", "scans.view", "members.view"] }</code></pre>
+        <p>Returns an empty list if the user is not a member (does not reveal membership status
+        — 404 is only returned if the org doesn't exist).</p>
+      </div>
+    </div>
+
+    <!-- LIST ROLES -->
+    <div class="endpoint" id="list-roles">
+      <div class="endpoint-header">
+        <span class="method get">GET</span>
+        <span class="endpoint-path">/organizations/roles/{slug}</span>
+        <span class="endpoint-summary">List roles in an org</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Returns all roles defined in the organisation. Requires <code>roles.view</code>.</p>
+        <pre><code class="language-json">[
+  {
+    "id": "role-uuid",
+    "name": "Security Analyst",
+    "description": "Can run and view scans",
+    "color": "#3fb950",
+    "privileges": ["scans.run", "scans.view"],
+    "is_system": false
+  }
+]</code></pre>
+      </div>
+    </div>
+
+    <!-- CREATE ROLE -->
+    <div class="endpoint" id="create-role">
+      <div class="endpoint-header">
+        <span class="method post">POST</span>
+        <span class="endpoint-path">/organizations/roles/{slug}</span>
+        <span class="endpoint-summary">Create a custom role</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Creates a new role. Requires <code>roles.manage</code>. The creator cannot assign
+        privileges they don't themselves hold (prevents privilege escalation).</p>
+        <h4>Request body</h4>
+        <div class="table-wrap"><table class="field-table">
+          <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>name</code></td><td class="field-type">string</td><td><span class="field-required">required</span></td><td>Display name</td></tr>
+            <tr><td><code>description</code></td><td class="field-type">string</td><td><span class="field-optional">optional</span></td><td></td></tr>
+            <tr><td><code>color</code></td><td class="field-type">string</td><td><span class="field-optional">optional</span></td><td>Hex color e.g. <code>#3fb950</code></td></tr>
+            <tr><td><code>privileges</code></td><td class="field-type">array[string]</td><td><span class="field-required">required</span></td><td>List of privilege strings</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- UPDATE ROLE -->
+    <div class="endpoint" id="update-role">
+      <div class="endpoint-header">
+        <span class="method patch">PATCH</span>
+        <span class="endpoint-path">/organizations/roles/{slug}/{role_id}</span>
+        <span class="endpoint-summary">Update a role</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Updates an existing role's name, description, color, or privileges.
+        Requires <code>roles.manage</code>.</p>
+      </div>
+    </div>
+
+    <!-- DELETE ROLE -->
+    <div class="endpoint" id="delete-role">
+      <div class="endpoint-header">
+        <span class="method delete">DELETE</span>
+        <span class="endpoint-path">/organizations/roles/{slug}/{role_id}</span>
+        <span class="endpoint-summary">Delete a role</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Deletes a custom role. Requires <code>roles.manage</code>. System roles (Owner)
+        cannot be deleted.</p>
+        <h4>Responses</h4>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge green">200</span></td><td>Role deleted</td></tr>
+            <tr><td><span class="badge red">403</span></td><td>Cannot delete system roles or missing privilege</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+<script src="assets/nav.js"></script>
+</body>
+</html>

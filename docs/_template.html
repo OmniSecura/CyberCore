@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CyberCore Docs — Page Title Here</title>
+  <link rel="stylesheet" href="assets/style.css"/>
+  <!-- Syntax highlighting (Prism.js) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css"/>
+</head>
+<body>
+
+<!-- ══ HEADER (same on every page — don't change) ══════════════════════════ -->
+<header class="site-header">
+  <button class="hamburger" id="hamburger" aria-label="Toggle navigation">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+      <rect y="3" width="20" height="2" rx="1"/>
+      <rect y="9" width="20" height="2" rx="1"/>
+      <rect y="15" width="20" height="2" rx="1"/>
+    </svg>
+  </button>
+  <div class="logo">🛡️ Cyber<span>Core</span> <span class="version">v0.1.0</span></div>
+  <nav>
+    <a href="https://github.com/yourname/cybercore" target="_blank">GitHub</a>
+    <a href="getting-started.html">Quick Start</a>
+    <a href="api-auth.html">API</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <!-- ══ SIDEBAR (injected by nav.js — don't change) ═════════════════════ -->
+  <aside class="sidebar"><div id="nav-container"></div></aside>
+
+  <!-- ══ CONTENT AREA — put your page content here ═══════════════════════ -->
+  <main class="content">
+
+    <!-- Page title -->
+    <h1>Page Title Here</h1>
+
+    <!-- Optional: service/tech badges -->
+    <div class="page-meta">
+      <span class="badge green">FastAPI</span>
+      <span class="badge blue">MySQL</span>
+      <span class="badge gray">Port :8000</span>
+    </div>
+
+    <!-- Lead paragraph — 1-2 sentences, describes what this page covers -->
+    <p class="lead">
+      Short description of what this page covers. Keep it to 1-2 sentences.
+    </p>
+
+    <!-- Optional: on-page table of contents -->
+    <div class="toc">
+      <div class="toc-title">On this page</div>
+      <ul>
+        <li><a href="#section-one">Section One</a></li>
+        <li><a href="#section-two">Section Two</a></li>
+      </ul>
+    </div>
+
+    <!-- ── Callout examples ──────────────────────────────────────────────── -->
+    <!--
+    <div class="callout info">
+      <div class="callout-title">Info title</div>
+      <p>Informational note.</p>
+    </div>
+    <div class="callout warning">
+      <div class="callout-title">Warning title</div>
+      <p>Warning content.</p>
+    </div>
+    <div class="callout danger">
+      <div class="callout-title">Danger title</div>
+      <p>Critical information.</p>
+    </div>
+    <div class="callout success">
+      <div class="callout-title">Success title</div>
+      <p>All good.</p>
+    </div>
+    -->
+
+    <!-- ── Section ───────────────────────────────────────────────────────── -->
+    <h2 id="section-one">Section One</h2>
+    <p>Content goes here. Use <code>inline code</code> for filenames, function names, etc.</p>
+
+    <!-- Code block example -->
+    <pre><code class="language-python"># Python example
+def hello(name: str) -> str:
+    return f"Hello, {name}"</code></pre>
+
+    <!-- Table example -->
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Column A</th><th>Column B</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Value 1</td><td>Value 2</td><td>Note</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ── Section ───────────────────────────────────────────────────────── -->
+    <h2 id="section-two">Section Two</h2>
+
+    <!-- API Endpoint card example -->
+    <!--
+    <div class="endpoint" id="my-endpoint">
+      <div class="endpoint-header">
+        <span class="method post">POST</span>
+        <span class="endpoint-path">/api/v1/resource</span>
+        <span class="endpoint-summary">Short description</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>What this endpoint does.</p>
+        <h4>Request body</h4>
+        <div class="table-wrap"><table class="field-table">
+          <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><code>field_name</code></td>
+              <td class="field-type">string</td>
+              <td><span class="field-required">required</span></td>
+              <td>Description</td>
+            </tr>
+            <tr>
+              <td><code>optional_field</code></td>
+              <td class="field-type">int</td>
+              <td><span class="field-optional">optional</span></td>
+              <td>Description</td>
+            </tr>
+          </tbody>
+        </table></div>
+        <h4>Responses</h4>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge green">200</span></td><td>Success</td></tr>
+            <tr><td><span class="badge red">401</span></td><td>Unauthorized</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+    -->
+
+    <!-- ── Step-by-step guide example ───────────────────────────────────── -->
+    <!--
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h3>Step title</h3>
+          <p>Step description.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h3>Next step</h3>
+          <p>Description.</p>
+        </div>
+      </div>
+    </div>
+    -->
+
+  </main>
+</div>
+
+<!-- ══ SCRIPTS (same on every page — add language packs as needed) ═════════ -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<!-- Add only the language packs you use on this page: -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-sql.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-javascript.min.js"></script>
+
+<!-- ══ NAV INJECTOR — must be last ═════════════════════════════════════════ -->
+<!-- To add this page to the sidebar, edit assets/nav.js and add it to NAV_ITEMS. -->
+<script src="assets/nav.js"></script>
+</body>
+</html>
+
+<!--
+═══════════════════════════════════════════════════════════
+  HOW TO ADD A NEW PAGE:
+  1. Copy this file: cp _template.html my-page.html
+  2. Edit <title> and <h1>
+  3. Add to nav.js → NAV_ITEMS array (one line change)
+  4. Write your content between the <main> tags
+  5. Push to GitHub — GitHub Pages serves it automatically
+
+  AVAILABLE CSS CLASSES:
+  .lead             — intro paragraph, slightly muted
+  .page-meta        — row of .badge chips
+  .badge.blue/green/yellow/red/gray/purple
+  .toc              — on-page table of contents box
+  .callout.info/warning/danger/success
+  .endpoint         — expandable API endpoint card
+  .endpoint-header  — clickable header (toggle open/close)
+  .method.get/post/patch/delete
+  .field-required / .field-optional
+  .field-type
+  .table-wrap       — responsive table wrapper
+  .steps / .step    — numbered step list
+  .status-flow      — horizontal status lifecycle display
+  .status-node.queued/running/completed/failed/cancelled
+  .card-grid / .card — card grid layout
+═══════════════════════════════════════════════════════════
+-->

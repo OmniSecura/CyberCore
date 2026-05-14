@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CyberCore Docs — Docker &amp; Deployment</title>
+  <link rel="stylesheet" href="assets/style.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css"/>
+</head>
+<body>
+
+<header class="site-header">
+  <button class="hamburger" id="hamburger" aria-label="Toggle navigation">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+      <rect y="3" width="20" height="2" rx="1"/><rect y="9" width="20" height="2" rx="1"/><rect y="15" width="20" height="2" rx="1"/>
+    </svg>
+  </button>
+  <div class="logo">🛡️ Cyber<span>Core</span> <span class="version">v0.1.0</span></div>
+  <nav>
+    <a href="https://github.com/yourname/cybercore" target="_blank">GitHub</a>
+    <a href="getting-started.html">Quick Start</a>
+    <a href="api-auth.html">API</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="sidebar"><div id="nav-container"></div></aside>
+
+  <main class="content">
+    <h1>Docker &amp; Deployment</h1>
+
+    <div class="page-meta">
+      <span class="badge blue">Docker Compose</span>
+      <span class="badge green">MySQL 8.0</span>
+      <span class="badge purple">Redis 7</span>
+      <span class="badge gray">nginx 1.27</span>
+    </div>
+
+    <p class="lead">
+      CyberCore ships with a single <code>docker-compose.yml</code> at the repository root that
+      starts every service — database, cache, backend microservices, SAST worker, and the React
+      dashboard — with one command.
+    </p>
+
+    <div class="toc">
+      <div class="toc-title">On this page</div>
+      <ul>
+        <li><a href="#containers">Container Overview</a></li>
+        <li><a href="#quickstart">Quick Start</a></li>
+        <li><a href="#env-vars">Environment Variables</a></li>
+        <li><a href="#networking">Networking</a></li>
+        <li><a href="#volumes">Volumes</a></li>
+        <li><a href="#building">Building Images</a></li>
+        <li><a href="#useful-commands">Useful Commands</a></li>
+        <li><a href="#dashboard-nginx">Dashboard &amp; nginx</a></li>
+        <li><a href="#production">Production Notes</a></li>
+      </ul>
+    </div>
+
+    <!-- ── Container Overview ──────────────────────────────────────────────── -->
+    <h2 id="containers">Container Overview</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Service name</th>
+            <th>Image / build</th>
+            <th>Host port</th>
+            <th>Role</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>db</code></td>
+            <td><code>mysql:8.0</code></td>
+            <td><code>3306</code></td>
+            <td>Relational database — three schemas: <code>auth_db</code>, <code>org_db</code>, <code>scan_db</code></td>
+          </tr>
+          <tr>
+            <td><code>redis</code></td>
+            <td><code>redis:7-alpine</code></td>
+            <td><code>6379</code></td>
+            <td>Celery broker + result backend (DB 0) &amp; token blacklist (DB 1)</td>
+          </tr>
+          <tr>
+            <td><code>auth</code></td>
+            <td><code>./services/auth-service</code></td>
+            <td><code>8000</code></td>
+            <td>JWT auth — registration, login, MFA, token refresh, email flows</td>
+          </tr>
+          <tr>
+            <td><code>org</code></td>
+            <td><code>./services/organization-service</code></td>
+            <td><code>8081</code></td>
+            <td>Organization management, RBAC roles, member invitations</td>
+          </tr>
+          <tr>
+            <td><code>scan</code></td>
+            <td><code>./services/scan-service</code></td>
+            <td><code>8082</code></td>
+            <td>Scan orchestrator — submits jobs to Celery, returns results</td>
+          </tr>
+          <tr>
+            <td><code>worker</code></td>
+            <td><code>./workers/scan-worker</code></td>
+            <td>—</td>
+            <td>Celery worker — runs SAST tools (Bandit, Semgrep, Gitleaks, Trivy…)</td>
+          </tr>
+          <tr>
+            <td><code>dashboard</code></td>
+            <td><code>./dashboard</code></td>
+            <td><code>80</code></td>
+            <td>React SPA built by Vite, served by nginx which also proxies <code>/api/*</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ── Quick Start ─────────────────────────────────────────────────────── -->
+    <h2 id="quickstart">Quick Start</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h3>Clone the repository</h3>
+          <pre><code class="language-bash">git clone https://github.com/YOUR_USERNAME/cybercore.git
+cd cybercore</code></pre>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h3>Create your <code>.env</code> file</h3>
+          <pre><code class="language-bash">cp .env.example .env</code></pre>
+          <p>Open <code>.env</code> and set at minimum:</p>
+          <ul>
+            <li><code>MYSQL_ROOT_PASSWORD</code> — any strong password</li>
+            <li><code>MYSQL_PASSWORD</code> — the app-user password</li>
+            <li><code>JWT_SECRET_KEY</code> — a long random string (see below)</li>
+          </ul>
+          <pre><code class="language-bash"># Generate a secure JWT secret:
+python -c "import secrets; print(secrets.token_hex(64))"</code></pre>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <h3>Build &amp; start everything</h3>
+          <pre><code class="language-bash">docker compose up --build -d</code></pre>
+          <p>On first run Docker will:</p>
+          <ul>
+            <li>Pull MySQL 8.0 and Redis 7 images</li>
+            <li>Build all four Python service images (auth, org, scan, worker)</li>
+            <li>Build the dashboard (Node 20 → Vite build → nginx)</li>
+            <li>Run <code>database/docker-init/01_databases.sql</code> to create the three schemas</li>
+            <li>Let each service create its own tables via SQLAlchemy (<code>DB_CREATE_TABLES=true</code>)</li>
+          </ul>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <h3>Open the app</h3>
+          <p>Navigate to <a href="http://localhost" target="_blank">http://localhost</a> — the dashboard is live.
+          Register your first user, verify the email (check the <code>auth</code> service logs if no
+          mail server is configured — the token is logged), and you're in.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Environment Variables ───────────────────────────────────────────── -->
+    <h2 id="env-vars">Environment Variables</h2>
+    <p>All variables are set in the root <code>.env</code> file. The compose file reads them
+    with <code>${VAR:-default}</code> syntax so defaults work even without <code>.env</code>
+    (useful for CI).</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Variable</th><th>Default</th><th>Used by</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>MYSQL_ROOT_PASSWORD</code></td>
+            <td><em>changeme_root</em></td>
+            <td>db</td>
+            <td>MySQL root password — change in production</td>
+          </tr>
+          <tr>
+            <td><code>MYSQL_USER</code></td>
+            <td><em>cybercore</em></td>
+            <td>db, all services</td>
+            <td>App-level DB user</td>
+          </tr>
+          <tr>
+            <td><code>MYSQL_PASSWORD</code></td>
+            <td><em>changeme_app</em></td>
+            <td>db, all services</td>
+            <td>App-level DB password — change in production</td>
+          </tr>
+          <tr>
+            <td><code>JWT_SECRET_KEY</code></td>
+            <td><span class="field-required">required</span></td>
+            <td>auth</td>
+            <td>Signs all JWTs — minimum 64 hex chars; must stay secret</td>
+          </tr>
+          <tr>
+            <td><code>MAIL_SERVER</code></td>
+            <td>—</td>
+            <td>auth</td>
+            <td>SMTP host (e.g. <code>smtp.gmail.com</code>)</td>
+          </tr>
+          <tr>
+            <td><code>MAIL_PORT</code></td>
+            <td>587</td>
+            <td>auth</td>
+            <td>SMTP port</td>
+          </tr>
+          <tr>
+            <td><code>MAIL_USERNAME</code></td>
+            <td>—</td>
+            <td>auth</td>
+            <td>SMTP login username</td>
+          </tr>
+          <tr>
+            <td><code>MAIL_PASSWORD</code></td>
+            <td>—</td>
+            <td>auth</td>
+            <td>SMTP login password / app-password</td>
+          </tr>
+          <tr>
+            <td><code>MAIL_FROM</code></td>
+            <td><em>noreply@cybercore.dev</em></td>
+            <td>auth</td>
+            <td>Sender address for all system emails</td>
+          </tr>
+          <tr>
+            <td><code>ALLOWED_ORIGINS</code></td>
+            <td><em>http://localhost:80,<br>http://localhost:3000</em></td>
+            <td>auth, org, scan</td>
+            <td>Comma-separated CORS origins — add your production domain here</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warning">
+      <div class="callout-title">JWT_SECRET_KEY is required</div>
+      <p>The compose file uses <code>${JWT_SECRET_KEY:?...}</code> — Docker will refuse to start
+      if this variable is missing from <code>.env</code>. Generate one and set it before running
+      <code>docker compose up</code>.</p>
+    </div>
+
+    <!-- ── Networking ──────────────────────────────────────────────────────── -->
+    <h2 id="networking">Networking</h2>
+    <p>All containers share the <code>cybercore_net</code> bridge network and reach each other
+    by service name:</p>
+
+    <pre><code class="language-text">dashboard ──→ http://auth:8000      (nginx proxy)
+dashboard ──→ http://org:8081       (nginx proxy)
+dashboard ──→ http://scan:8082      (nginx proxy)
+scan      ──→ http://auth:8000      (token verification)
+org       ──→ http://auth:8000      (token verification)
+scan      ──→ redis:6379            (Celery broker/backend)
+worker    ──→ redis:6379            (Celery broker/backend)
+auth      ──→ redis:6379            (token blacklist, DB 1)
+auth      ──→ db:3306               (auth_db)
+org       ──→ db:3306               (org_db)
+scan      ──→ db:3306               (scan_db)
+worker    ──→ db:3306               (scan_db)</code></pre>
+
+    <p>Host-side ports (<code>3306</code>, <code>6379</code>, <code>8000–8082</code>) are exposed
+    for local developer tooling (DBeaver, RedisInsight, Swagger UI). In production you should
+    remove those bindings and only expose port <code>80</code> (or <code>443</code>) via the
+    dashboard nginx.</p>
+
+    <!-- ── Volumes ─────────────────────────────────────────────────────────── -->
+    <h2 id="volumes">Volumes</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Volume</th><th>Mounted in</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>mysql_data</code></td>
+            <td>db → <code>/var/lib/mysql</code></td>
+            <td>Persists all database data across restarts</td>
+          </tr>
+          <tr>
+            <td><code>redis_data</code></td>
+            <td>redis → <code>/data</code></td>
+            <td>Persists Celery results and token blacklist across restarts</td>
+          </tr>
+          <tr>
+            <td><code>scan_uploads</code></td>
+            <td>scan + worker → <code>/tmp/cybercore/uploads</code></td>
+            <td>Shared volume for ZIP uploads — scan writes, worker reads</td>
+          </tr>
+          <tr>
+            <td><code>scan_workspace</code></td>
+            <td>worker → <code>/tmp/cybercore/scans</code></td>
+            <td>Temporary scan directories (git clones, extracted ZIPs)</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout info">
+      <div class="callout-title">Shared upload volume</div>
+      <p><code>scan_uploads</code> is mounted in both <code>scan</code> (writes the uploaded file)
+      and <code>worker</code> (reads the file to extract and scan). Without this shared volume,
+      the worker container would not have access to files uploaded through the scan-service API.</p>
+    </div>
+
+    <!-- ── Building Images ─────────────────────────────────────────────────── -->
+    <h2 id="building">Building Images</h2>
+
+    <h3>Build all at once</h3>
+    <pre><code class="language-bash">docker compose build</code></pre>
+
+    <h3>Rebuild a single service after a code change</h3>
+    <pre><code class="language-bash">docker compose build auth
+docker compose up -d auth   # restart only auth</code></pre>
+
+    <h3>Build arguments — pin tool versions in the worker</h3>
+    <p>The scan-worker Dockerfile exposes <code>ARG</code> variables for each SAST binary so you
+    can pin versions without editing the file:</p>
+    <pre><code class="language-bash">docker compose build \
+  --build-arg GITLEAKS_VERSION=8.18.4 \
+  --build-arg TRIVY_VERSION=0.52.2 \
+  --build-arg GOSEC_VERSION=2.21.4 \
+  --build-arg HADOLINT_VERSION=2.12.0 \
+  worker</code></pre>
+
+    <!-- ── Useful Commands ─────────────────────────────────────────────────── -->
+    <h2 id="useful-commands">Useful Commands</h2>
+
+    <h3>Logs</h3>
+    <pre><code class="language-bash">docker compose logs -f             # tail all services
+docker compose logs -f auth        # tail auth-service only
+docker compose logs -f worker      # tail scan-worker (Celery output)</code></pre>
+
+    <h3>Shell access</h3>
+    <pre><code class="language-bash">docker compose exec auth bash      # shell inside auth container
+docker compose exec db mysql -u cybercore -p auth_db  # MySQL prompt</code></pre>
+
+    <h3>Stop / restart</h3>
+    <pre><code class="language-bash">docker compose down                # stop containers (data volumes preserved)
+docker compose down -v             # stop AND delete all volumes (full reset)
+docker compose restart auth        # restart a single service</code></pre>
+
+    <h3>View running containers &amp; health</h3>
+    <pre><code class="language-bash">docker compose ps</code></pre>
+
+    <h3>Create a superadmin user</h3>
+    <pre><code class="language-bash"># Register via the API (any user), then promote via MySQL:
+docker compose exec db mysql -u cybercore -p auth_db \
+  -e "UPDATE users SET is_superadmin=1 WHERE email='your@email.com';"</code></pre>
+
+    <!-- ── Dashboard nginx ─────────────────────────────────────────────────── -->
+    <h2 id="dashboard-nginx">Dashboard &amp; nginx</h2>
+    <p>The <code>dashboard</code> container is a two-stage build:</p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h3>Build stage (Node 20 Alpine)</h3>
+          <p>Runs <code>npm ci &amp;&amp; npm run build</code>. The Vite output lands in
+          <code>/app/dist</code>.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h3>Runtime stage (nginx 1.27 Alpine)</h3>
+          <p>Copies <code>/app/dist</code> into <code>/usr/share/nginx/html</code>.
+          The custom <code>nginx.conf</code> handles two jobs:</p>
+          <ul>
+            <li><strong>SPA routing</strong> — all unknown paths return <code>index.html</code>
+            so React Router can take over</li>
+            <li><strong>API proxy</strong> — <code>/api/v1/*</code> paths are forwarded to the
+            correct backend service by name</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <h3>nginx proxy rules (mirrors vite.config.js)</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>URL prefix</th><th>Proxied to</th></tr></thead>
+        <tbody>
+          <tr><td><code>/api/v1/scans</code></td><td><code>http://scan:8082</code></td></tr>
+          <tr><td><code>/api/v1/invites</code></td><td><code>http://org:8081</code></td></tr>
+          <tr><td><code>/api/v1/organizations</code></td><td><code>http://org:8081</code></td></tr>
+          <tr><td><code>/api/v1/users</code></td><td><code>http://auth:8000</code></td></tr>
+          <tr><td><code>/api/v1/email</code></td><td><code>http://auth:8000</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ── Production Notes ────────────────────────────────────────────────── -->
+    <h2 id="production">Production Notes</h2>
+
+    <div class="callout danger">
+      <div class="callout-title">Change the defaults before going live</div>
+      <ul>
+        <li>Set strong, unique values for <code>MYSQL_ROOT_PASSWORD</code>, <code>MYSQL_PASSWORD</code>,
+        and <code>JWT_SECRET_KEY</code> in <code>.env</code>.</li>
+        <li>Never commit <code>.env</code> to git — it is already in <code>.gitignore</code>.</li>
+      </ul>
+    </div>
+
+    <h3>HTTPS / TLS</h3>
+    <p>In production, place a reverse proxy (Caddy, nginx, Traefik) in front of the
+    <code>dashboard</code> container that terminates TLS. Update <code>ALLOWED_ORIGINS</code>
+    to your <code>https://</code> domain:</p>
+    <pre><code class="language-bash">ALLOWED_ORIGINS=https://app.cybercore.dev</code></pre>
+
+    <h3>Remove developer-facing port bindings</h3>
+    <p>The compose file exposes MySQL (<code>3306</code>), Redis (<code>6379</code>), and the
+    individual service ports (<code>8000–8082</code>) for local dev convenience. In production,
+    remove those <code>ports:</code> entries — only expose port <code>80</code> (or <code>443</code>
+    via your TLS proxy) so the internal services are unreachable from the internet.</p>
+
+    <h3>Resource limits</h3>
+    <p>The scan-worker downloads git repos and runs multiple SAST tools concurrently.
+    In production, add <code>deploy.resources.limits</code> to the <code>worker</code> service
+    in docker-compose.yml:</p>
+    <pre><code class="language-yaml">worker:
+  deploy:
+    resources:
+      limits:
+        cpus: "2.0"
+        memory: 4G</code></pre>
+
+    <h3>Worker concurrency</h3>
+    <p>The default Celery concurrency is <code>2</code> (two parallel scan tasks). Increase it for
+    machines with more cores by overriding the <code>CMD</code> in docker-compose.yml or by
+    passing a build arg / env var:</p>
+    <pre><code class="language-yaml">worker:
+  environment:
+    CELERY_CONCURRENCY: "4"   # if the worker reads this var</code></pre>
+    <p>Or override the command directly:</p>
+    <pre><code class="language-yaml">worker:
+  command: >
+    python -m celery -A src.celery_app:celery_app worker
+    --loglevel=INFO --queues=sast --concurrency=4</code></pre>
+
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-yaml.min.js"></script>
+<script src="assets/nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CyberCore Docs — Scans API</title>
+  <link rel="stylesheet" href="assets/style.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css"/>
+</head>
+<body>
+
+<header class="site-header">
+  <button class="hamburger" id="hamburger" aria-label="Toggle navigation">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+      <rect y="3" width="20" height="2" rx="1"/><rect y="9" width="20" height="2" rx="1"/><rect y="15" width="20" height="2" rx="1"/>
+    </svg>
+  </button>
+  <div class="logo">🛡️ Cyber<span>Core</span> <span class="version">v0.1.0</span></div>
+  <nav>
+    <a href="https://github.com/yourname/cybercore" target="_blank">GitHub</a>
+    <a href="getting-started.html">Quick Start</a>
+    <a href="api-auth.html">API</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="sidebar"><div id="nav-container"></div></aside>
+
+  <main class="content">
+    <h1>Scans API Reference</h1>
+    <p class="lead">All endpoints for submitting, monitoring, and retrieving security scans.
+    Base URL: <code>http://localhost:8082/api/v1/scans</code></p>
+
+    <div class="callout info">
+      <div class="callout-title">Auth &amp; Privileges</div>
+      <p>All scan endpoints require a valid session cookie. Each endpoint also requires a
+      specific privilege in the target organisation:</p>
+      <ul>
+        <li><code>scans.run</code> — submit new scans</li>
+        <li><code>scans.view</code> — read scans and findings</li>
+        <li><code>scans.manage</code> — cancel and delete scans</li>
+      </ul>
+    </div>
+
+    <!-- SUBMIT GIT -->
+    <div class="endpoint" id="submit-git">
+      <div class="endpoint-header">
+        <span class="method post">POST</span>
+        <span class="endpoint-path">/organizations/{slug}/scans/git</span>
+        <span class="endpoint-summary">Submit a Git repository scan</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Queues a SAST scan of a public Git repository. The repository will be shallow-cloned
+        (<code>--depth 1</code>) by the worker. Returns immediately with <code>202 Accepted</code>
+        while the scan runs in the background.</p>
+        <h4>Path parameters</h4>
+        <div class="table-wrap"><table class="field-table">
+          <thead><tr><th>Param</th><th>Type</th><th>Notes</th></tr></thead>
+          <tbody><tr><td><code>slug</code></td><td class="field-type">string</td><td>Organisation slug</td></tr></tbody>
+        </table></div>
+        <h4>Request body</h4>
+        <div class="table-wrap"><table class="field-table">
+          <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>name</code></td><td class="field-type">string</td><td><span class="field-required">required</span></td><td>Max 255 chars; human-readable label</td></tr>
+            <tr><td><code>target_url</code></td><td class="field-type">string</td><td><span class="field-required">required</span></td><td>Public git repo URL. Scheme must be <code>http</code>, <code>https</code>, or <code>git</code>. SSH and file:// are rejected.</td></tr>
+          </tbody>
+        </table></div>
+        <pre><code class="language-bash">curl -b cookies.txt -X POST \
+  http://localhost:8082/api/v1/scans/organizations/my-company/scans/git \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Backend API v2.3",
+    "target_url": "https://github.com/my-org/backend-api"
+  }'</code></pre>
+        <h4>Response (202)</h4>
+        <pre><code class="language-json">{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "Backend API v2.3",
+  "status": "queued",
+  "scan_type": "sast",
+  "target_type": "git_url",
+  "target_url": "https://github.com/my-org/backend-api",
+  "organization_id": "org-uuid",
+  "created_by": "user-uuid",
+  "celery_task_id": "celery-task-uuid",
+  "findings_count": 0,
+  "started_at": null,
+  "completed_at": null,
+  "error_message": null,
+  "created_at": "2026-05-14T10:00:00Z",
+  "updated_at": "2026-05-14T10:00:00Z"
+}</code></pre>
+        <h4>Responses</h4>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge green">202</span></td><td>Scan queued successfully</td></tr>
+            <tr><td><span class="badge red">400</span></td><td>Invalid URL (bad scheme, leading dash, etc.)</td></tr>
+            <tr><td><span class="badge red">401</span></td><td>Not authenticated</td></tr>
+            <tr><td><span class="badge red">403</span></td><td>Missing <code>scans.run</code> privilege</td></tr>
+            <tr><td><span class="badge red">404</span></td><td>Organisation not found</td></tr>
+            <tr><td><span class="badge yellow">429</span></td><td>Quota exceeded (active or daily limit)</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- SUBMIT UPLOAD -->
+    <div class="endpoint" id="submit-upload">
+      <div class="endpoint-header">
+        <span class="method post">POST</span>
+        <span class="endpoint-path">/organizations/{slug}/scans/upload</span>
+        <span class="endpoint-summary">Submit a ZIP archive scan</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Queues a SAST scan of an uploaded ZIP archive. Use <code>multipart/form-data</code>.
+        The file is streamed to disk — max 500 MiB by default.</p>
+        <h4>Form fields</h4>
+        <div class="table-wrap"><table class="field-table">
+          <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>name</code></td><td class="field-type">string (form)</td><td><span class="field-required">required</span></td><td>Human-readable label</td></tr>
+            <tr><td><code>file</code></td><td class="field-type">file</td><td><span class="field-required">required</span></td><td>Must be a <code>.zip</code> file; max 500 MiB</td></tr>
+          </tbody>
+        </table></div>
+        <pre><code class="language-bash">curl -b cookies.txt -X POST \
+  http://localhost:8082/api/v1/scans/organizations/my-company/scans/upload \
+  -F "name=My Application" \
+  -F "file=@/path/to/source.zip;type=application/zip"</code></pre>
+        <h4>Responses</h4>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge green">202</span></td><td>Scan queued (same body as git scan)</td></tr>
+            <tr><td><span class="badge red">400</span></td><td>Not a .zip file, or empty upload</td></tr>
+            <tr><td><span class="badge red">413</span></td><td>File exceeds size limit</td></tr>
+            <tr><td><span class="badge yellow">429</span></td><td>Quota exceeded</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- LIST SCANS -->
+    <div class="endpoint" id="list-scans">
+      <div class="endpoint-header">
+        <span class="method get">GET</span>
+        <span class="endpoint-path">/organizations/{slug}/scans</span>
+        <span class="endpoint-summary">List scan jobs</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Returns a paginated list of scan jobs for the organisation, ordered by
+        <code>created_at DESC</code>.</p>
+        <h4>Query parameters</h4>
+        <div class="table-wrap"><table class="field-table">
+          <thead><tr><th>Param</th><th>Type</th><th>Default</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>offset</code></td><td class="field-type">int</td><td>0</td><td>Pagination offset</td></tr>
+            <tr><td><code>limit</code></td><td class="field-type">int</td><td>20</td><td>Max 100</td></tr>
+            <tr><td><code>status</code></td><td class="field-type">string</td><td>—</td><td>Filter by status: <code>queued</code>, <code>running</code>, <code>completed</code>, <code>failed</code>, <code>cancelled</code></td></tr>
+          </tbody>
+        </table></div>
+        <pre><code class="language-bash">curl -b cookies.txt \
+  "http://localhost:8082/api/v1/scans/organizations/my-company/scans?limit=10&status=completed"</code></pre>
+        <h4>Response</h4>
+        <pre><code class="language-json">{
+  "total": 42,
+  "items": [
+    { "id": "...", "name": "...", "status": "completed", "findings_count": 15, ... }
+  ]
+}</code></pre>
+      </div>
+    </div>
+
+    <!-- STATS -->
+    <div class="endpoint" id="stats">
+      <div class="endpoint-header">
+        <span class="method get">GET</span>
+        <span class="endpoint-path">/organizations/{slug}/scans/stats</span>
+        <span class="endpoint-summary">Get scan counts by status</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Returns per-status counts for all non-deleted scans in the organisation.
+        Implemented as a single <code>GROUP BY status</code> query. Used by the dashboard
+        header to show active scan count without an extra list call.</p>
+        <pre><code class="language-bash">curl -b cookies.txt \
+  http://localhost:8082/api/v1/scans/organizations/my-company/scans/stats</code></pre>
+        <h4>Response</h4>
+        <pre><code class="language-json">{
+  "queued":    2,
+  "running":   1,
+  "completed": 38,
+  "failed":    1,
+  "cancelled": 0,
+  "total":     42
+}</code></pre>
+      </div>
+    </div>
+
+    <!-- GET SCAN -->
+    <div class="endpoint" id="get-scan">
+      <div class="endpoint-header">
+        <span class="method get">GET</span>
+        <span class="endpoint-path">/organizations/{slug}/scans/{job_id}</span>
+        <span class="endpoint-summary">Get scan details</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Returns the full scan job object. Poll this endpoint while <code>status</code> is
+        <code>queued</code> or <code>running</code>. The dashboard uses exponential backoff
+        (3 s → 15 s cap) to reduce unnecessary requests.</p>
+        <div class="callout info">
+          <div class="callout-title">Findings not included</div>
+          <p>The detail response does <strong>not</strong> include findings — use the separate
+          <code>/findings</code> endpoint. This avoids loading thousands of rows on every poll.</p>
+        </div>
+        <h4>Responses</h4>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge green">200</span></td><td>Scan job object</td></tr>
+            <tr><td><span class="badge red">404</span></td><td>Job not found in this org (or soft-deleted)</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- LIST FINDINGS -->
+    <div class="endpoint" id="list-findings">
+      <div class="endpoint-header">
+        <span class="method get">GET</span>
+        <span class="endpoint-path">/organizations/{slug}/scans/{job_id}/findings</span>
+        <span class="endpoint-summary">List findings for a scan</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Returns paginated findings for a completed (or failed) scan, ordered by severity
+        then file path. Also returns per-severity counts over the entire scan (not just
+        the current page).</p>
+        <h4>Query parameters</h4>
+        <div class="table-wrap"><table class="field-table">
+          <thead><tr><th>Param</th><th>Type</th><th>Default</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>offset</code></td><td class="field-type">int</td><td>0</td><td>Pagination offset</td></tr>
+            <tr><td><code>limit</code></td><td class="field-type">int</td><td>100</td><td>Max 500</td></tr>
+            <tr><td><code>severity</code></td><td class="field-type">string</td><td>—</td><td>Filter: <code>critical</code>, <code>high</code>, <code>medium</code>, <code>low</code>, <code>info</code></td></tr>
+            <tr><td><code>tool</code></td><td class="field-type">string</td><td>—</td><td>Filter: <code>bandit</code>, <code>semgrep</code>, <code>gitleaks</code>, <code>trivy</code>, <code>hadolint</code>, <code>pip-audit</code>, <code>npm-audit</code>, <code>gosec</code></td></tr>
+          </tbody>
+        </table></div>
+        <pre><code class="language-bash"># All high+ findings from semgrep
+curl -b cookies.txt \
+  "http://localhost:8082/api/v1/scans/organizations/my-company/scans/JOB_ID/findings?severity=high&tool=semgrep"</code></pre>
+        <h4>Response</h4>
+        <pre><code class="language-json">{
+  "total": 47,
+  "truncated": false,
+  "severity_counts": {
+    "critical": 2, "high": 8, "medium": 15, "low": 20, "info": 2
+  },
+  "items": [
+    {
+      "id": "uuid",
+      "tool": "semgrep",
+      "rule_id": "python.django.security.injection.tainted-sql-string",
+      "severity": "high",
+      "confidence": "high",
+      "title": "SQL injection via string formatting",
+      "message": "User input is formatted into a SQL query without sanitization.",
+      "file_path": "app/views.py",
+      "line_start": 42,
+      "line_end": 44,
+      "code_snippet": "query = f\"SELECT * FROM users WHERE id = {user_id}\"",
+      "cwe": "CWE-89",
+      "owasp": "A03:2021",
+      "fingerprint": "sha256-hex-string",
+      "created_at": "2026-05-14T10:05:00Z"
+    }
+  ]
+}</code></pre>
+        <p><strong>Note:</strong> <code>severity_counts</code> reflects all findings for the scan,
+        not the filtered subset. <code>truncated: true</code> means there are more findings beyond
+        the current page.</p>
+      </div>
+    </div>
+
+    <!-- CANCEL -->
+    <div class="endpoint" id="cancel">
+      <div class="endpoint-header">
+        <span class="method post">POST</span>
+        <span class="endpoint-path">/organizations/{slug}/scans/{job_id}/cancel</span>
+        <span class="endpoint-summary">Cancel a scan</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Cancels a <code>queued</code> or <code>running</code> scan. Sends a revoke signal to
+        the Celery worker. Returns the updated job object.</p>
+        <div class="callout warning">
+          <div class="callout-title">Requires scans.manage</div>
+          <p><code>scans.run</code> is not sufficient — you need <code>scans.manage</code> privilege.</p>
+        </div>
+        <h4>Responses</h4>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge green">200</span></td><td>Scan cancelled; updated job object returned</td></tr>
+            <tr><td><span class="badge red">400</span></td><td>Job already in terminal state (<code>completed</code>, <code>failed</code>, <code>cancelled</code>)</td></tr>
+            <tr><td><span class="badge red">403</span></td><td>Missing <code>scans.manage</code> privilege</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- DELETE -->
+    <div class="endpoint" id="delete-scan">
+      <div class="endpoint-header">
+        <span class="method delete">DELETE</span>
+        <span class="endpoint-path">/organizations/{slug}/scans/{job_id}</span>
+        <span class="endpoint-summary">Soft-delete a scan</span>
+        <span class="endpoint-arrow">›</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Soft-deletes a scan job. The job is hidden from all list/detail endpoints.
+        Findings remain in the database. Additional side effects:</p>
+        <ul>
+          <li>Status <code>running</code> → returns <strong>400</strong>. Cancel first.</li>
+          <li>Status <code>queued</code> → auto-cancelled before deletion (Celery task revoked).</li>
+          <li>Upload scans → the ZIP file is removed from disk (best-effort).</li>
+        </ul>
+        <h4>Responses</h4>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge green">204</span></td><td>Deleted (no body)</td></tr>
+            <tr><td><span class="badge red">400</span></td><td>Cannot delete a running scan</td></tr>
+            <tr><td><span class="badge red">403</span></td><td>Missing <code>scans.manage</code> privilege</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+<script src="assets/nav.js"></script>
+</body>
+</html>
