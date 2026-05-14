@@ -74,9 +74,12 @@ def run_dast_scan(self, job_id: str) -> dict:
             job.status     = "running"
             job.started_at = datetime.now(tz=timezone.utc)
 
-            target_url  = job.target_url or ""
-            extra       = dict(job.extra or {})
-            profile     = str(extra.get("profile") or "passive").lower()
+            target_url     = job.target_url or ""
+            extra          = dict(job.extra or {})
+            profile        = str(extra.get("profile") or "passive").lower()
+            discovery_mode = str(extra.get("discovery_mode") or "spider").lower()
+            openapi_url    = extra.get("openapi_url") or None
+            exclude_paths  = list(extra.get("exclude_paths") or [])
             # Seed initial progress so the UI doesn't show a blank phase.
             extra["progress"] = 0
             extra["current_phase"] = "starting"
@@ -93,6 +96,9 @@ def run_dast_scan(self, job_id: str) -> dict:
             profile=profile,
             context_name=context_name,
             progress_cb=_make_progress_cb(job_id),
+            discovery_mode=discovery_mode,
+            openapi_url=openapi_url,
+            exclude_paths=exclude_paths,
         )
 
         # ── Parse + dedup ─────────────────────────────────────────────────────

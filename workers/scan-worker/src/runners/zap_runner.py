@@ -24,8 +24,10 @@ from ..global_settings import (
     ZAP_PORT,
     ZAP_API_KEY,
     ZAP_TIMEOUT_SPIDER_MIN,
+    ZAP_TIMEOUT_AJAX_SPIDER_MIN,
     ZAP_TIMEOUT_PASSIVE_MIN,
     ZAP_TIMEOUT_ACTIVE_MIN,
+    ZAP_TIMEOUT_OPENAPI_MIN,
     ZAP_POLL_INTERVAL_SEC,
 )
 
@@ -84,25 +86,73 @@ def _wait_for_daemon(client: httpx.Client, attempts: int = 60) -> None:
     raise ZapError(f"ZAP daemon not reachable after {attempts}s: {last_err}")
 
 
-def _new_context(client: httpx.Client, name: str, target_url: str) -> str:
+def _host_regex_prefix(target_url: str) -> str:
     """
-    ZAP contexts scope a scan to one or more URL patterns. We create a fresh
-    context per job and add the target's host as an in-scope regex so the
-    spider doesn't wander off into unrelated linked sites.
+    Build the regex prefix that anchors a pattern to the target's host. Used
+    both by the in-scope include pattern and by the exclude-path translator,
+    so they stay consistent.
     """
-    _get(client, "/JSON/context/action/newContext/", contextName=name)
-    # Match the host (allow http+https), any path. The pattern is a regex on
-    # ZAP's side, hence the escape on dots.
     from urllib.parse import urlparse
     parsed = urlparse(target_url)
     host = parsed.hostname or ""
-    pattern = rf"https?://{host.replace('.', r'\.')}(:\d+)?/.*"
+    return rf"https?://{host.replace('.', r'\.')}(:\d+)?"
+
+
+def _exclude_path_to_regex(raw: str, host_prefix: str) -> str:
+    """
+    Translate a user-supplied exclude entry into a full ZAP regex pattern.
+
+    Rules:
+      • starts with "/"  → treated as a URL path. We escape regex metacharacters,
+                           then turn shell-style "*" back into ".*" so the user
+                           can write "/admin/*" naturally. Anchored on the
+                           target host.
+      • otherwise        → treated as a raw regex, passed through verbatim.
+                           Lets power users write things like
+                           "^.*/(logout|signout)$" if they really want to.
+    """
+    import re
+    s = raw.strip()
+    if not s.startswith("/"):
+        return s
+    # Escape everything, then unescape the "*" -> ".*" sugar.
+    escaped = re.escape(s).replace(r"\*", ".*")
+    return f"{host_prefix}{escaped}"
+
+
+def _new_context(
+    client: httpx.Client,
+    name: str,
+    target_url: str,
+    exclude_paths: list[str] | None = None,
+) -> str:
+    """
+    ZAP contexts scope a scan to one or more URL patterns. We create a fresh
+    context per job, include the target's host, and (optionally) add exclude
+    patterns so the spider/active scanner won't visit logout/destroy/etc URLs.
+    """
+    _get(client, "/JSON/context/action/newContext/", contextName=name)
+    host_prefix = _host_regex_prefix(target_url)
     _get(
         client,
         "/JSON/context/action/includeInContext/",
         contextName=name,
-        regex=pattern,
+        regex=f"{host_prefix}/.*",
     )
+    for raw in exclude_paths or []:
+        pattern = _exclude_path_to_regex(raw, host_prefix)
+        try:
+            _get(
+                client,
+                "/JSON/context/action/excludeFromContext/",
+                contextName=name,
+                regex=pattern,
+            )
+            log.info("Excluded from scope: %s", pattern)
+        except ZapError as exc:
+            # Bad regex from the user shouldn't kill the whole scan — log and
+            # carry on without that exclusion.
+            log.warning("Invalid exclude regex %r ignored: %s", pattern, exc)
     # Pull the context id back so the spider/active calls can reference it.
     data = _get(client, "/JSON/context/view/context/", contextName=name)
     return str(data["context"]["id"])
@@ -164,6 +214,96 @@ def _run_spider(
         progress_cb,
         scanId=scan_id,
     )
+
+
+def _run_ajax_spider(
+    client: httpx.Client,
+    context_name: str,
+    target_url: str,
+    progress_cb: ProgressCb | None,
+) -> None:
+    """
+    Headless-browser crawl. Needed for SPAs — the classic spider only sees
+    the initial HTML and misses everything React/Vue/Angular renders.
+
+    AJAX spider's API is shaped differently from the classic spider:
+      • No numeric scan id, just one global session.
+      • Status is "running" / "stopped" (not 0–100). We map that to 50/100 for
+        the progress callback so the UI still gets a heartbeat.
+    """
+    _get(
+        client,
+        "/JSON/ajaxSpider/action/scan/",
+        url=target_url,
+        contextName=context_name,
+        inScope="true",
+    )
+    deadline = time.monotonic() + ZAP_TIMEOUT_AJAX_SPIDER_MIN * 60
+    started = False
+    while True:
+        data = _get(client, "/JSON/ajaxSpider/view/status/")
+        running = str(data.get("status", "")).lower() == "running"
+        if running and not started:
+            started = True
+            if progress_cb:
+                progress_cb("ajax_spider", 25)
+        if not running:
+            if progress_cb:
+                progress_cb("ajax_spider", 100)
+            return
+        if time.monotonic() > deadline:
+            log.warning("AJAX spider timed out (limit %dm), stopping",
+                        ZAP_TIMEOUT_AJAX_SPIDER_MIN)
+            # Best-effort stop so the daemon's browser pool gets released.
+            try:
+                _get(client, "/JSON/ajaxSpider/action/stop/")
+            except Exception:
+                pass
+            return
+        if progress_cb:
+            progress_cb("ajax_spider", 50)
+        time.sleep(ZAP_POLL_INTERVAL_SEC)
+
+
+def _run_openapi_import(
+    client: httpx.Client,
+    spec_url: str,
+    context_name: str,
+    progress_cb: ProgressCb | None,
+) -> None:
+    """
+    Pull an OpenAPI/Swagger spec into ZAP. The OpenAPI add-on parses every
+    operation in the spec and pushes the endpoint+method+example-params into
+    ZAP's site tree, so the passive/active stages can hit them without any
+    crawl.
+
+    The import is essentially synchronous on ZAP's side — it returns once
+    parsing is done — but we expose progress 0→100 around it so the UI shows
+    the phase happened.
+    """
+    if progress_cb:
+        progress_cb("openapi", 10)
+    data = _get(
+        client,
+        "/JSON/openapi/action/importUrl/",
+        url=spec_url,
+        contextName=context_name,
+    )
+    # ZAP returns {"Result":"OK"} on success or a list of parser errors. We
+    # surface non-OK as a warning but keep scanning — partial coverage is
+    # still useful.
+    result = data.get("Result") or data.get("result")
+    if result and str(result).upper() != "OK":
+        log.warning("OpenAPI import returned non-OK: %s", data)
+    if progress_cb:
+        progress_cb("openapi", 100)
+    # Safety belt: if the daemon is still parsing in the background, give it
+    # a short grace period before passive scan starts pulling alerts.
+    deadline = time.monotonic() + ZAP_TIMEOUT_OPENAPI_MIN * 60
+    while time.monotonic() < deadline:
+        # No dedicated status endpoint — sleep one poll cycle and assume done.
+        time.sleep(ZAP_POLL_INTERVAL_SEC)
+        return
 
 
 def _run_passive(client: httpx.Client, progress_cb: ProgressCb | None) -> None:
@@ -255,28 +395,61 @@ def run(
     profile: str,
     context_name: str,
     progress_cb: ProgressCb | None = None,
+    *,
+    discovery_mode: str = "spider",
+    openapi_url: str | None = None,
+    exclude_paths: list[str] | None = None,
 ) -> list[dict]:
     """
     Run a full DAST sequence and return the raw ZAP alerts list.
 
     `profile`:
-      • "passive" → spider + passive only
-      • "active"  → spider + passive + active scan
+      • "passive" → discovery + passive only
+      • "active"  → discovery + passive + active scan
+
+    `discovery_mode` controls how endpoints get into ZAP's site tree before
+    passive/active stages run:
+      • "spider"       → classic HTTP crawler
+      • "ajax_spider"  → headless browser (SPA-aware)
+      • "openapi"      → import an OpenAPI spec from `openapi_url`
+
+    `exclude_paths` are user-supplied path/glob/regex patterns kept out of
+    scope — see `_exclude_path_to_regex` for the input shapes.
 
     `progress_cb(phase, percent)` is invoked whenever the percentage changes;
     use it to mirror progress into the job row.
     """
     if profile not in ("passive", "active"):
         raise ZapError(f"Unknown DAST profile: {profile!r}")
+    if discovery_mode not in ("spider", "ajax_spider", "openapi"):
+        raise ZapError(f"Unknown discovery_mode: {discovery_mode!r}")
+    if discovery_mode == "openapi" and not openapi_url:
+        raise ZapError("openapi_url required when discovery_mode='openapi'")
 
     with _client() as client:
         _wait_for_daemon(client)
-        context_id = _new_context(client, context_name, target_url)
+        context_id = _new_context(
+            client,
+            context_name,
+            target_url,
+            exclude_paths=exclude_paths,
+        )
         try:
-            _run_spider(client, context_name, target_url, progress_cb)
+            # ── Discovery phase ────────────────────────────────────────────
+            if discovery_mode == "spider":
+                _run_spider(client, context_name, target_url, progress_cb)
+            elif discovery_mode == "ajax_spider":
+                _run_ajax_spider(client, context_name, target_url, progress_cb)
+            else:  # openapi
+                _run_openapi_import(client, openapi_url, context_name, progress_cb)
+
+            # ── Always-on passive drain ────────────────────────────────────
             _run_passive(client, progress_cb)
+
+            # ── Optional active scan ──────────────────────────────────────
             if profile == "active":
                 _run_active(client, context_id, target_url, progress_cb)
+
             return _collect_alerts(client, target_url)
         finally:
             _cleanup_context(client, context_name)

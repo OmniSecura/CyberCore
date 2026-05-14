@@ -139,6 +139,12 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
   const [mode, setMode]       = useState('git')
   // DAST profile: 'passive' | 'active'
   const [profile, setProfile] = useState('passive')
+  // DAST endpoint discovery: 'spider' | 'ajax_spider' | 'openapi'
+  const [discoveryMode, setDiscoveryMode] = useState('spider')
+  const [openapiUrl, setOpenapiUrl]       = useState('')
+  // Multi-line textarea; we split on newlines when submitting so the user
+  // can paste a list naturally.
+  const [excludePaths, setExcludePaths]   = useState('')
   const [name, setName]       = useState('')
   const [url, setUrl]         = useState('')   // shared by SAST git-mode and DAST
   const [file, setFile]       = useState(null)
@@ -151,7 +157,7 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
 
   const canSubmit = !loading && !limitReached && name.trim() && (
     scanType === 'dast'
-      ? url.trim()
+      ? (url.trim() && (discoveryMode !== 'openapi' || openapiUrl.trim()))
       : (mode === 'git' ? url.trim() : !!file)
   )
 
@@ -162,11 +168,23 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
     try {
       let job
       if (scanType === 'dast') {
-        job = await scanApi.submitWeb(slug, {
+        // Split the textarea on newlines AND commas — both feel natural and
+        // there's no ambiguity since neither belongs in a URL path.
+        const excludeList = excludePaths
+          .split(/[\n,]/)
+          .map(s => s.trim())
+          .filter(Boolean)
+        const payload = {
           name: name.trim(),
           target_url: url.trim(),
           profile,
-        })
+          discovery_mode: discoveryMode,
+          exclude_paths: excludeList,
+        }
+        if (discoveryMode === 'openapi') {
+          payload.openapi_url = openapiUrl.trim()
+        }
+        job = await scanApi.submitWeb(slug, payload)
       } else if (mode === 'git') {
         job = await scanApi.submitGit(slug, { name: name.trim(), target_url: url.trim() })
       } else {
@@ -186,6 +204,9 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
     setErr(null)
     setUrl('')
     setFile(null)
+    setOpenapiUrl('')
+    setExcludePaths('')
+    setDiscoveryMode('spider')
     if (fileRef.current) fileRef.current.value = ''
   }
 
@@ -343,6 +364,96 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
                     {profile === 'passive'
                       ? 'Crawls the app and inspects headers, cookies, TLS, and form structure. No attack payloads are sent.'
                       : 'In addition to the passive checks, ZAP will send real attack payloads (XSS, SQLi, command injection, SSRF, …) to discovered endpoints. Use only on apps you own.'}
+                  </div>
+                </div>
+
+                {/* Discovery mode — how ZAP finds endpoints to scan */}
+                <div className="cc-mfield">
+                  <label>Endpoint discovery</label>
+                  <div className="sc-mode-tabs" style={{ marginTop: 4 }}>
+                    <button
+                      type="button"
+                      className={`sc-mode-tab${discoveryMode === 'spider' ? ' sc-mode-tab--on' : ''}`}
+                      onClick={() => setDiscoveryMode('spider')}
+                      disabled={limitReached}
+                    >
+                      Spider
+                    </button>
+                    <button
+                      type="button"
+                      className={`sc-mode-tab${discoveryMode === 'ajax_spider' ? ' sc-mode-tab--on' : ''}`}
+                      onClick={() => setDiscoveryMode('ajax_spider')}
+                      disabled={limitReached}
+                    >
+                      AJAX spider (SPA)
+                    </button>
+                    <button
+                      type="button"
+                      className={`sc-mode-tab${discoveryMode === 'openapi' ? ' sc-mode-tab--on' : ''}`}
+                      onClick={() => setDiscoveryMode('openapi')}
+                      disabled={limitReached}
+                    >
+                      OpenAPI
+                    </button>
+                  </div>
+                  <div style={{
+                    font: '400 12px/1.5 var(--font-body)',
+                    color: '#8899AA',
+                    marginTop: 8,
+                  }}>
+                    {discoveryMode === 'spider' && 'Classic HTTP crawler. Fast, but misses pages rendered by JavaScript.'}
+                    {discoveryMode === 'ajax_spider' && 'Runs a headless browser to find routes in SPAs (React, Vue, Angular). ~5× slower than the regular spider.'}
+                    {discoveryMode === 'openapi' && 'Imports an OpenAPI/Swagger spec from a URL — gives full API coverage without crawling.'}
+                  </div>
+                </div>
+
+                {/* OpenAPI spec URL — only when openapi discovery is picked */}
+                {discoveryMode === 'openapi' && (
+                  <div className="cc-mfield">
+                    <label>OpenAPI spec URL</label>
+                    <input
+                      value={openapiUrl}
+                      onChange={e => setOpenapiUrl(e.target.value)}
+                      placeholder="https://app.example.com/openapi.json"
+                      required
+                      disabled={limitReached}
+                    />
+                    <div style={{
+                      font: '400 12px/1.4 var(--font-body)',
+                      color: '#8899AA',
+                      marginTop: 6,
+                    }}>
+                      FastAPI auto-publishes this at <code>/openapi.json</code>. Other frameworks may use <code>/swagger.json</code>.
+                    </div>
+                  </div>
+                )}
+
+                {/* Advanced: exclude paths */}
+                <div className="cc-mfield">
+                  <label>Exclude paths <span style={{ color: '#8899AA', fontWeight: 400 }}>(optional)</span></label>
+                  <textarea
+                    value={excludePaths}
+                    onChange={e => setExcludePaths(e.target.value)}
+                    placeholder={'/logout\n/admin/delete-*\n/users/me'}
+                    rows={3}
+                    disabled={limitReached}
+                    style={{
+                      width: '100%',
+                      font: '400 13px/1.5 var(--font-mono)',
+                      padding: '8px 10px',
+                      border: '1px solid #D5DFEA',
+                      borderRadius: 6,
+                      resize: 'vertical',
+                      background: '#fff',
+                      color: '#0A1628',
+                    }}
+                  />
+                  <div style={{
+                    font: '400 12px/1.5 var(--font-body)',
+                    color: '#8899AA',
+                    marginTop: 6,
+                  }}>
+                    One pattern per line. Use <code>/path</code> or <code>/path/*</code> globs to keep destructive endpoints out of scope (especially important for active scans).
                   </div>
                 </div>
               </>
@@ -949,6 +1060,32 @@ function OverviewContent({ scan }) {
               <div className="cc-info-k">Profile</div>
               <div className="cc-info-v" style={{ textTransform: 'capitalize' }}>
                 {scan.extra.profile}
+              </div>
+            </div>
+          )}
+          {scan.scan_type === 'dast' && scan.extra?.discovery_mode && (
+            <div className="cc-info-row">
+              <div className="cc-info-k">Discovery</div>
+              <div className="cc-info-v">
+                {scan.extra.discovery_mode === 'ajax_spider' ? 'AJAX spider (SPA)'
+                  : scan.extra.discovery_mode === 'openapi' ? 'OpenAPI import'
+                  : 'Spider'}
+              </div>
+            </div>
+          )}
+          {scan.scan_type === 'dast' && scan.extra?.openapi_url && (
+            <div className="cc-info-row">
+              <div className="cc-info-k">OpenAPI</div>
+              <div className="cc-info-v cc-info-v--mono" style={{ wordBreak: 'break-all' }}>
+                {scan.extra.openapi_url}
+              </div>
+            </div>
+          )}
+          {scan.scan_type === 'dast' && scan.extra?.exclude_paths?.length > 0 && (
+            <div className="cc-info-row">
+              <div className="cc-info-k">Excludes</div>
+              <div className="cc-info-v cc-info-v--mono" style={{ fontSize: 12 }}>
+                {scan.extra.exclude_paths.join(', ')}
               </div>
             </div>
           )}

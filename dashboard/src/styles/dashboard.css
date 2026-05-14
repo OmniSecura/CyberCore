@@ -718,10 +718,24 @@
 .cc-modal {
   width: 100%; max-width: 460px;
   margin: 16px;
+  /* Cap to viewport minus the 16px margin on each side. Combined with the
+     flex column below + overflow on the body, the modal will always fit on
+     screen and scroll its content instead of overflowing the page. */
+  max-height: calc(100vh - 32px);
+  display: flex; flex-direction: column;
   background: #fff;
   border-radius: 18px;
   box-shadow: 0 12px 48px rgba(10,22,40,.16);
   animation: cc-up 220ms cubic-bezier(.22, 1, .36, 1);
+  overflow: hidden;   /* keep rounded corners clean when body scrolls */
+}
+/* The <form> inside the modal inherits the flex column so the body can be
+   the only growing child — otherwise the form would stack everything and
+   `overflow:auto` on the body wouldn't trigger. */
+.cc-modal > form {
+  display: flex; flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
 }
 @keyframes cc-up {
   from { opacity: 0; transform: translateY(16px); }
@@ -731,6 +745,7 @@
   padding: 22px 24px 0;
   display: flex; align-items: flex-start;
   justify-content: space-between; gap: 12px;
+  flex-shrink: 0;
 }
 .cc-modal-title { font: 700 17px/1.2 var(--font-display); color: #0A1628; }
 .cc-modal-sub   { font: 400 13px/1.5 var(--font-body); color: #8899AA; margin-top: 4px; }
@@ -743,8 +758,22 @@
 }
 .cc-modal-x:hover { color: #0A1628; background: #F4F8FC; }
 .cc-modal-x svg { width: 18px; height: 18px; }
-.cc-modal-body { padding: 18px 24px; }
-.cc-modal-foot { padding: 0 24px 20px; display: flex; justify-content: flex-end; gap: 8px; }
+/* Body grows to fill remaining space and scrolls when content overflows. */
+.cc-modal-body {
+  padding: 18px 24px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+.cc-modal-foot {
+  padding: 16px 24px 20px;
+  display: flex; justify-content: flex-end; gap: 8px;
+  flex-shrink: 0;
+  /* Subtle separator that appears once the body content scrolls under it,
+     so the user can tell there's more above the footer. */
+  border-top: 1px solid #E6EEF6;
+  background: #fff;
+}
 
 /* Modal form */
 .cc-mfield { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }

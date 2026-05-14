@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Literal, Optional
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 
 # Allowed schemes for the user-supplied repository URL. We deliberately reject
@@ -81,38 +81,70 @@ class SubmitGitScanRequest(BaseModel):
 # and is gated on a higher privilege at the router layer.
 DastProfile = Literal["passive", "active"]
 
+# How ZAP discovers endpoints before the passive/active stages run.
+#   • spider        — classic HTTP crawler. Good for server-rendered sites,
+#                     fast, finds <a> and <form>. Misses anything generated
+#                     by JavaScript.
+#   • ajax_spider   — headless browser walks the SPA, clicks elements, follows
+#                     XHR. Mandatory for React/Vue/Angular apps; ~5x slower.
+#   • openapi       — imports an OpenAPI/Swagger spec from a URL. Best for
+#                     REST APIs — gives full coverage without any crawl.
+DastDiscoveryMode = Literal["spider", "ajax_spider", "openapi"]
+
+
+# Practical caps for the exclude list. Big enough for any realistic use case,
+# tight enough that a buggy/abusive client can't blow up the JSON column.
+_MAX_EXCLUDES = 20
+_MAX_EXCLUDE_LEN = 256
+
 
 class SubmitWebScanRequest(BaseModel):
     name: str
     target_url: str
     profile: DastProfile = "passive"
+    discovery_mode: DastDiscoveryMode = "spider"
+    # Required when discovery_mode == "openapi". Spec is fetched by ZAP, not
+    # us — same scheme rules apply (http/https, not localhost).
+    openapi_url: Optional[str] = None
+    # Path patterns to keep out of scope. Two forms accepted by the worker:
+    #   • plain path / glob — "/logout", "/admin/*", "/users/me/delete"
+    #     → expanded to a regex anchored on the target host
+    #   • full regex — anything not starting with "/" is passed through as-is
+    # The runner converts these to ZAP's excludeFromContext patterns. Empty
+    # list = no exclusions (everything on host is in scope).
+    exclude_paths: list[str] = []
 
     @field_validator("target_url")
     @classmethod
     def url_ok(cls, v: str) -> str:
+        return _validate_web_url(v, field_name="target_url")
+
+    @field_validator("openapi_url")
+    @classmethod
+    def openapi_ok(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
         v = v.strip()
         if not v:
-            raise ValueError("target_url must not be empty")
-        if v.startswith("-"):
-            raise ValueError("target_url must not start with '-'")
-        if any(ch.isspace() or ord(ch) < 0x20 for ch in v):
-            raise ValueError("target_url must not contain whitespace or control characters")
-        parsed = urlparse(v)
-        scheme = (parsed.scheme or "").lower()
-        if scheme not in _ALLOWED_WEB_SCHEMES:
-            raise ValueError(
-                f"Unsupported URL scheme '{parsed.scheme}'. "
-                f"Allowed: {', '.join(_ALLOWED_WEB_SCHEMES)}"
-            )
-        host = parsed.hostname or ""
-        if not host or not _HOST_RE.match(host):
-            raise ValueError("target_url must include a valid hostname")
-        if _is_private_or_local(host):
-            raise ValueError(
-                "Cannot scan private, loopback, or link-local addresses. "
-                "Use a publicly reachable URL."
-            )
-        return v
+            return None
+        return _validate_web_url(v, field_name="openapi_url")
+
+    @field_validator("exclude_paths")
+    @classmethod
+    def excludes_ok(cls, v: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for raw in v or []:
+            s = (raw or "").strip()
+            if not s:
+                continue
+            if any(ch.isspace() or ord(ch) < 0x20 for ch in s):
+                raise ValueError("exclude_paths entries must not contain whitespace or control characters")
+            if len(s) > _MAX_EXCLUDE_LEN:
+                raise ValueError(f"exclude_paths entry too long (>{_MAX_EXCLUDE_LEN} chars)")
+            cleaned.append(s)
+        if len(cleaned) > _MAX_EXCLUDES:
+            raise ValueError(f"At most {_MAX_EXCLUDES} exclude_paths allowed")
+        return cleaned
 
     @field_validator("name")
     @classmethod
@@ -123,6 +155,51 @@ class SubmitWebScanRequest(BaseModel):
         if len(v) > 255:
             raise ValueError("name must be at most 255 characters")
         return v
+
+    @model_validator(mode="after")
+    def check_openapi_consistency(self):
+        # Cross-field rule: openapi mode requires the spec URL, and providing
+        # an openapi URL while in a crawl mode is almost always a mistake — be
+        # strict so the user notices instead of silently ignoring the field.
+        if self.discovery_mode == "openapi" and not self.openapi_url:
+            raise ValueError("openapi_url is required when discovery_mode is 'openapi'")
+        if self.discovery_mode != "openapi" and self.openapi_url:
+            raise ValueError(
+                "openapi_url can only be set when discovery_mode is 'openapi'"
+            )
+        return self
+
+
+def _validate_web_url(v: str, *, field_name: str) -> str:
+    """
+    Shared URL validation for both `target_url` and `openapi_url`. Same scheme
+    + private-IP rules apply to both — if we let the user point `openapi_url`
+    at `http://169.254.169.254/` we'd be re-opening the SSRF door we just
+    closed for `target_url`.
+    """
+    v = v.strip()
+    if not v:
+        raise ValueError(f"{field_name} must not be empty")
+    if v.startswith("-"):
+        raise ValueError(f"{field_name} must not start with '-'")
+    if any(ch.isspace() or ord(ch) < 0x20 for ch in v):
+        raise ValueError(f"{field_name} must not contain whitespace or control characters")
+    parsed = urlparse(v)
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in _ALLOWED_WEB_SCHEMES:
+        raise ValueError(
+            f"Unsupported URL scheme '{parsed.scheme}'. "
+            f"Allowed: {', '.join(_ALLOWED_WEB_SCHEMES)}"
+        )
+    host = parsed.hostname or ""
+    if not host or not _HOST_RE.match(host):
+        raise ValueError(f"{field_name} must include a valid hostname")
+    if _is_private_or_local(host):
+        raise ValueError(
+            "Cannot scan private, loopback, or link-local addresses. "
+            "Use a publicly reachable URL."
+        )
+    return v
 
 
 # ── Response schemas ───────────────────────────────────────────────────────────

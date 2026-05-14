@@ -20,8 +20,10 @@ ZAP_API_KEY = os.getenv("ZAP_API_KEY", "")
 # decorator — these are softer fences that let one phase abort without
 # killing the whole job.
 ZAP_TIMEOUT_SPIDER_MIN = int(os.getenv("ZAP_TIMEOUT_SPIDER_MIN", "10"))
+ZAP_TIMEOUT_AJAX_SPIDER_MIN = int(os.getenv("ZAP_TIMEOUT_AJAX_SPIDER_MIN", "20"))
 ZAP_TIMEOUT_PASSIVE_MIN = int(os.getenv("ZAP_TIMEOUT_PASSIVE_MIN", "10"))
 ZAP_TIMEOUT_ACTIVE_MIN = int(os.getenv("ZAP_TIMEOUT_ACTIVE_MIN", "45"))
+ZAP_TIMEOUT_OPENAPI_MIN = int(os.getenv("ZAP_TIMEOUT_OPENAPI_MIN", "5"))
 
 # How often the runner polls a long-running ZAP operation and pushes progress
 # back to the ScanJob row. 5 s is a good balance between responsive UI and

@@ -229,7 +229,14 @@ class ScanService:
             status="queued",
             target_type="web_url",
             target_url=body.target_url,
-            extra={"profile": body.profile},
+            extra={
+                "profile": body.profile,
+                "discovery_mode": body.discovery_mode,
+                "openapi_url": body.openapi_url,
+                # Stored as a list; the runner translates to ZAP regex patterns
+                # at scan time. Empty list means "no exclusions".
+                "exclude_paths": list(body.exclude_paths or []),
+            },
         )
         self.db.add(job)
         self.db.commit()
