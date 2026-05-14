@@ -24,7 +24,11 @@ class ScanJob(AuditMixin, Base):
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
-    organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    # No standalone index here — the composite ix_scan_jobs_org_active_created
+    # below has organization_id as its leftmost column and serves any query
+    # that filters on org alone. A separate single-column index would just
+    # duplicate work for every write.
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False)
     created_by: Mapped[str] = mapped_column(String(36), nullable=False)
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
