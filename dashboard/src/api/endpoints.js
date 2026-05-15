@@ -108,6 +108,29 @@ export const scanApi = {
   },
   cancel:    (slug, jobId) => api.post(`/scans/organizations/${slug}/scans/${jobId}/cancel`),
   remove:    (slug, jobId) => api.delete(`/scans/organizations/${slug}/scans/${jobId}`),
+  // Export returns a downloadable blob, not JSON — we bypass the standard
+  // api.* client because it parses JSON and would mangle the HTML body.
+  exportReport: async (slug, jobId, format = 'json') => {
+    const res = await fetch(
+      `/api/v1/scans/organizations/${slug}/scans/${jobId}/export?format=${encodeURIComponent(format)}`,
+      { credentials: 'include' }
+    )
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      const err = new Error(data?.detail || 'Export failed')
+      err.status = res.status
+      err.data   = data
+      throw err
+    }
+    // Pull the filename out of Content-Disposition so the saved file keeps
+    // the server-generated "cybercore-<name>-<ts>" name instead of getting
+    // a random UUID from the browser.
+    const cd = res.headers.get('Content-Disposition') || ''
+    const match = cd.match(/filename="([^"]+)"/)
+    const filename = match?.[1] || `report.${format}`
+    const blob = await res.blob()
+    return { blob, filename }
+  },
 }
 
 // ── Email ─────────────────────────────────────────────────────────────────

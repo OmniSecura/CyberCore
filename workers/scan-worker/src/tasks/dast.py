@@ -56,7 +56,13 @@ def _make_progress_cb(job_id: str):
     time_limit=75 * 60,
     soft_time_limit=73 * 60,
 )
-def run_dast_scan(self, job_id: str) -> dict:
+def run_dast_scan(self, job_id: str, auth: dict | None = None) -> dict:
+    """
+    `auth` is a dict matching scan-service's AuthConfig schema (`type` plus
+    type-specific fields). It is passed through Celery args, never stored in
+    the database — the worker forwards it to the ZAP runner and the broker
+    message is dropped on ack.
+    """
     try:
         # ── Load job + flip to running ────────────────────────────────────────
         with db_session() as db:
@@ -99,6 +105,7 @@ def run_dast_scan(self, job_id: str) -> dict:
             discovery_mode=discovery_mode,
             openapi_url=openapi_url,
             exclude_paths=exclude_paths,
+            auth=auth,
         )
 
         # ── Parse + dedup ─────────────────────────────────────────────────────

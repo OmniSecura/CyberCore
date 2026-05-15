@@ -145,6 +145,15 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
   // Multi-line textarea; we split on newlines when submitting so the user
   // can paste a list naturally.
   const [excludePaths, setExcludePaths]   = useState('')
+  // Auth: 'none' | 'bearer' | 'form'. Credentials are never stored — they're
+  // submitted once and used only by the worker.
+  const [authMode, setAuthMode]   = useState('none')
+  const [authToken, setAuthToken] = useState('')
+  const [authLoginUrl, setAuthLoginUrl]   = useState('')
+  const [authUsername, setAuthUsername]   = useState('')
+  const [authPassword, setAuthPassword]   = useState('')
+  const [authUserField, setAuthUserField] = useState('username')
+  const [authPassField, setAuthPassField] = useState('password')
   const [name, setName]       = useState('')
   const [url, setUrl]         = useState('')   // shared by SAST git-mode and DAST
   const [file, setFile]       = useState(null)
@@ -155,9 +164,19 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
   const isFree       = plan === 'free'
   const limitReached = isFree && activeCount >= FREE_SCAN_LIMIT
 
+  // Block submit if auth fields are inconsistent — backend would 422 us
+  // anyway but it's nicer to enable the button only when the form is valid.
+  const dastAuthOk = (
+    authMode === 'none'
+      || (authMode === 'bearer' && authToken.trim())
+      || (authMode === 'form' && authLoginUrl.trim() && authUsername.trim() && authPassword)
+  )
+
   const canSubmit = !loading && !limitReached && name.trim() && (
     scanType === 'dast'
-      ? (url.trim() && (discoveryMode !== 'openapi' || openapiUrl.trim()))
+      ? (url.trim()
+          && (discoveryMode !== 'openapi' || openapiUrl.trim())
+          && dastAuthOk)
       : (mode === 'git' ? url.trim() : !!file)
   )
 
@@ -184,6 +203,18 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
         if (discoveryMode === 'openapi') {
           payload.openapi_url = openapiUrl.trim()
         }
+        if (authMode === 'bearer') {
+          payload.auth = { type: 'bearer', token: authToken.trim() }
+        } else if (authMode === 'form') {
+          payload.auth = {
+            type: 'form',
+            login_url: authLoginUrl.trim(),
+            username: authUsername.trim(),
+            password: authPassword,
+            username_field: authUserField.trim() || 'username',
+            password_field: authPassField.trim() || 'password',
+          }
+        }
         job = await scanApi.submitWeb(slug, payload)
       } else if (mode === 'git') {
         job = await scanApi.submitGit(slug, { name: name.trim(), target_url: url.trim() })
@@ -207,6 +238,9 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
     setOpenapiUrl('')
     setExcludePaths('')
     setDiscoveryMode('spider')
+    setAuthMode('none')
+    setAuthToken(''); setAuthLoginUrl(''); setAuthUsername(''); setAuthPassword('')
+    setAuthUserField('username'); setAuthPassField('password')
     if (fileRef.current) fileRef.current.value = ''
   }
 
@@ -456,6 +490,120 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
                     One pattern per line. Use <code>/path</code> or <code>/path/*</code> globs to keep destructive endpoints out of scope (especially important for active scans).
                   </div>
                 </div>
+
+                {/* Authentication — let ZAP scan logged-in endpoints */}
+                <div className="cc-mfield">
+                  <label>Authentication <span style={{ color: '#8899AA', fontWeight: 400 }}>(optional)</span></label>
+                  <div className="sc-mode-tabs" style={{ marginTop: 4 }}>
+                    <button
+                      type="button"
+                      className={`sc-mode-tab${authMode === 'none' ? ' sc-mode-tab--on' : ''}`}
+                      onClick={() => setAuthMode('none')}
+                      disabled={limitReached}
+                    >
+                      None
+                    </button>
+                    <button
+                      type="button"
+                      className={`sc-mode-tab${authMode === 'bearer' ? ' sc-mode-tab--on' : ''}`}
+                      onClick={() => setAuthMode('bearer')}
+                      disabled={limitReached}
+                    >
+                      Bearer token
+                    </button>
+                    <button
+                      type="button"
+                      className={`sc-mode-tab${authMode === 'form' ? ' sc-mode-tab--on' : ''}`}
+                      onClick={() => setAuthMode('form')}
+                      disabled={limitReached}
+                    >
+                      Form login
+                    </button>
+                  </div>
+                  <div style={{
+                    font: '400 12px/1.5 var(--font-body)',
+                    color: '#8899AA',
+                    marginTop: 8,
+                  }}>
+                    {authMode === 'none' && 'Scan runs unauthenticated. Use this if the target is fully public.'}
+                    {authMode === 'bearer' && 'Adds `Authorization: Bearer <token>` to every ZAP request. Works for JWT/API key auth.'}
+                    {authMode === 'form' && 'ZAP performs a login POST itself and reuses the resulting session for all scanning.'}
+                    {authMode !== 'none' && (
+                      <div style={{ marginTop: 6, color: '#C53030' }}>
+                        Credentials are never stored — they live only in the worker queue and are discarded after the scan.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {authMode === 'bearer' && (
+                  <div className="cc-mfield">
+                    <label>Bearer token</label>
+                    <input
+                      type="password"
+                      value={authToken}
+                      onChange={e => setAuthToken(e.target.value)}
+                      placeholder="eyJhbGciOi…"
+                      autoComplete="new-password"
+                      disabled={limitReached}
+                    />
+                  </div>
+                )}
+
+                {authMode === 'form' && (
+                  <>
+                    <div className="cc-mfield">
+                      <label>Login URL</label>
+                      <input
+                        value={authLoginUrl}
+                        onChange={e => setAuthLoginUrl(e.target.value)}
+                        placeholder="https://app.example.com/login"
+                        disabled={limitReached}
+                      />
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      <div className="cc-mfield">
+                        <label>Username</label>
+                        <input
+                          value={authUsername}
+                          onChange={e => setAuthUsername(e.target.value)}
+                          autoComplete="off"
+                          disabled={limitReached}
+                        />
+                      </div>
+                      <div className="cc-mfield">
+                        <label>Password</label>
+                        <input
+                          type="password"
+                          value={authPassword}
+                          onChange={e => setAuthPassword(e.target.value)}
+                          autoComplete="new-password"
+                          disabled={limitReached}
+                        />
+                      </div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      <div className="cc-mfield">
+                        <label>Username field name</label>
+                        <input
+                          value={authUserField}
+                          onChange={e => setAuthUserField(e.target.value)}
+                          placeholder="username"
+                          disabled={limitReached}
+                        />
+                      </div>
+                      <div className="cc-mfield">
+                        <label>Password field name</label>
+                        <input
+                          value={authPassField}
+                          onChange={e => setAuthPassField(e.target.value)}
+                          placeholder="password"
+                          disabled={limitReached}
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}
               </>
             )}
 
@@ -1089,6 +1237,17 @@ function OverviewContent({ scan }) {
               </div>
             </div>
           )}
+          {scan.scan_type === 'dast' && scan.extra?.auth_type && (
+            <div className="cc-info-row">
+              <div className="cc-info-k">Auth</div>
+              <div className="cc-info-v" style={{ textTransform: 'capitalize' }}>
+                {scan.extra.auth_type}
+                <span style={{ font: '400 11px/1 var(--font-body)', color: '#8899AA', marginLeft: 8 }}>
+                  (credentials not stored)
+                </span>
+              </div>
+            </div>
+          )}
           {scan.status === 'running' && scan.scan_type === 'dast' && scan.extra && (
             <div className="cc-info-row">
               <div className="cc-info-k">Phase</div>
@@ -1171,7 +1330,21 @@ function ScanDetail({ slug, jobId, has, onBack }) {
   const [cancelling, setCancelling] = useState(false)
   const [deleting, setDeleting]   = useState(false)
   const [confirmDel, setConfirmDel] = useState(false)
+  const [exportOpen, setExportOpen] = useState(false)
   const pollRef = useRef(null)
+  const exportMenuRef = useRef(null)
+
+  // Close the export dropdown when the user clicks anywhere outside it.
+  useEffect(() => {
+    if (!exportOpen) return
+    const onDocClick = (e) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target)) {
+        setExportOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [exportOpen])
 
   const load = useCallback(() => {
     return scanApi.get(slug, jobId)
@@ -1243,6 +1416,25 @@ function ScanDetail({ slug, jobId, has, onBack }) {
     }
   }
 
+  // Trigger the browser's "save file" flow. We can't use a static <a download>
+  // because the URL depends on the chosen format and credentials need to flow
+  // through fetch().
+  async function doExport(format) {
+    try {
+      const { blob, filename } = await scanApi.exportReport(slug, jobId, format)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (ex) {
+      alert(ex?.data?.detail || 'Failed to export report.')
+    }
+  }
+
   if (loading) return (
     <div style={{ padding: '48px 0', textAlign: 'center', color: '#8899AA', font: '400 13.5px/1 var(--font-body)' }}>
       Loading scan…
@@ -1275,6 +1467,64 @@ function ScanDetail({ slug, jobId, has, onBack }) {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+          {/* Export — only meaningful once the scan has produced findings */}
+          {!isActive && (
+            <div ref={exportMenuRef} style={{ position: 'relative' }}>
+              <button
+                className="cc-btn cc-btn-md cc-btn-ghost"
+                onClick={() => setExportOpen(o => !o)}
+                type="button"
+              >
+                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M8 2v9M4 7l4 4 4-4M2 13h12"/>
+                </svg>
+                Export
+              </button>
+              {exportOpen && (
+                <div style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 4px)',
+                  right: 0,
+                  background: '#fff',
+                  border: '1px solid #E6EEF6',
+                  borderRadius: 8,
+                  boxShadow: '0 8px 24px rgba(10,22,40,.08)',
+                  minWidth: 180,
+                  overflow: 'hidden',
+                  zIndex: 30,
+                }}>
+                  <button
+                    type="button"
+                    onClick={() => { setExportOpen(false); doExport('html') }}
+                    style={{
+                      display: 'block', width: '100%', textAlign: 'left',
+                      padding: '10px 14px', background: 'none', border: 'none',
+                      cursor: 'pointer', font: '500 13.5px/1.3 var(--font-body)', color: '#0A1628',
+                    }}
+                  >
+                    HTML report
+                    <div style={{ font: '400 11.5px/1.3 var(--font-body)', color: '#8899AA', marginTop: 2 }}>
+                      Printable, ready for PDF
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setExportOpen(false); doExport('json') }}
+                    style={{
+                      display: 'block', width: '100%', textAlign: 'left',
+                      padding: '10px 14px', background: 'none', border: 'none', borderTop: '1px solid #E6EEF6',
+                      cursor: 'pointer', font: '500 13.5px/1.3 var(--font-body)', color: '#0A1628',
+                    }}
+                  >
+                    JSON data
+                    <div style={{ font: '400 11.5px/1.3 var(--font-body)', color: '#8899AA', marginTop: 2 }}>
+                      Raw findings + metadata
+                    </div>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           {isActive && has('scans.manage') && (
             <button className="cc-btn cc-btn-md cc-btn-ghost" onClick={doCancel} disabled={cancelling}>
               {cancelling

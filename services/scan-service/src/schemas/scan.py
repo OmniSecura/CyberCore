@@ -98,6 +98,71 @@ _MAX_EXCLUDES = 20
 _MAX_EXCLUDE_LEN = 256
 
 
+# Authentication options for the DAST scanner.
+#
+# Credentials are deliberately NOT persisted in the database — they are passed
+# to the Celery task as arguments (broker message in Redis) and discarded
+# after the worker consumes the task. The visible `extra.auth_type` on the
+# ScanJob is just a label for the UI; the actual token/password never round-
+# trips through any API response.
+#
+# Two methods supported on MVP:
+#   • bearer — adds `Authorization: Bearer <token>` to every ZAP request via
+#              the Replacer add-on. Works for JWT/session-token APIs.
+#   • form   — ZAP performs a form-based login itself (POST username+password
+#              to a login URL), then carries the resulting session through
+#              subsequent requests via cookies.
+AuthType = Literal["bearer", "form"]
+
+
+class AuthConfig(BaseModel):
+    type: AuthType
+    # bearer
+    token: Optional[str] = None
+    # form
+    login_url: Optional[str] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
+    # Field names that appear in the login form. Defaults match the most
+    # common naming; users can override for apps that use "email"/"pwd"/etc.
+    username_field: str = "username"
+    password_field: str = "password"
+    # Optional regex ZAP uses to detect a "logged in" response — if present
+    # in the body, the session is considered active; if absent, ZAP re-auths.
+    logged_in_regex: Optional[str] = None
+
+    @field_validator("token", "login_url", "username", "password",
+                     "username_field", "password_field", "logged_in_regex")
+    @classmethod
+    def strip_strings(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        v = v.strip()
+        return v or None
+
+    @model_validator(mode="after")
+    def check_consistency(self):
+        # Per-type requirements. Validators on individual fields can't see
+        # cross-field state, so the "you forgot the token" check lives here.
+        if self.type == "bearer":
+            if not self.token:
+                raise ValueError("bearer auth requires `token`")
+            if len(self.token) > 8192:
+                raise ValueError("bearer token is implausibly long (>8 KiB)")
+        elif self.type == "form":
+            missing = [
+                f for f, v in [
+                    ("login_url", self.login_url),
+                    ("username", self.username),
+                    ("password", self.password),
+                ] if not v
+            ]
+            if missing:
+                raise ValueError(f"form auth requires: {', '.join(missing)}")
+            _validate_web_url(self.login_url, field_name="login_url")
+        return self
+
+
 class SubmitWebScanRequest(BaseModel):
     name: str
     target_url: str
@@ -113,6 +178,8 @@ class SubmitWebScanRequest(BaseModel):
     # The runner converts these to ZAP's excludeFromContext patterns. Empty
     # list = no exclusions (everything on host is in scope).
     exclude_paths: list[str] = []
+    # Optional. Credentials never reach the database — see AuthConfig docs.
+    auth: Optional[AuthConfig] = None
 
     @field_validator("target_url")
     @classmethod

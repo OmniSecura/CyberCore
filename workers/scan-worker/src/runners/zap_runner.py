@@ -190,6 +190,161 @@ def _poll(
         time.sleep(ZAP_POLL_INTERVAL_SEC)
 
 
+def _configure_bearer_auth(client: httpx.Client, token: str) -> None:
+    """
+    Inject `Authorization: Bearer <token>` into every outgoing ZAP request.
+
+    Uses the Replacer add-on (bundled in zaproxy/zap-stable). The rule is
+    global to this ZAP daemon instance — fine because we serialise DAST jobs
+    on the worker side. If we ever go concurrent we have to migrate to
+    per-context Replacer rules.
+    """
+    # Description must be unique enough to find + remove later if needed; we
+    # don't bother cleaning up because the daemon outlives a single job and
+    # the next job's `_configure_bearer_auth` would overwrite anyway.
+    desc = "cybercore-bearer"
+    try:
+        # Remove any leftover rule from a previous job first.
+        _get(client, "/JSON/replacer/action/removeRule/", description=desc)
+    except Exception:
+        pass
+    _get(
+        client,
+        "/JSON/replacer/action/addRule/",
+        description=desc,
+        enabled="true",
+        matchType="REQ_HEADER",
+        matchRegex="false",
+        matchString="Authorization",
+        replacement=f"Bearer {token}",
+        # No URL filter — apply to all requests.
+        initiators="",
+    )
+    log.info("Bearer auth configured (header injection via Replacer)")
+
+
+def _clear_bearer_auth(client: httpx.Client) -> None:
+    """
+    Best-effort removal of the bearer Replacer rule. Called in the finally
+    block so a token from one job doesn't leak into the next, even if the
+    next job uses no auth at all.
+    """
+    try:
+        _get(client, "/JSON/replacer/action/removeRule/", description="cybercore-bearer")
+    except Exception as exc:
+        log.debug("Bearer rule cleanup failed: %s", exc)
+
+
+def _configure_form_auth(
+    client: httpx.Client,
+    context_id: str,
+    auth: dict,
+) -> None:
+    """
+    Set up ZAP form-based authentication for the given context.
+
+    Sequence:
+      1. Set context's authentication method to "formBasedAuthentication"
+         with the login URL and the request body template.
+      2. (optional) Set a logged-in indicator so ZAP knows when the session
+         has expired and re-runs the login.
+      3. Create a user inside the context with the supplied credentials.
+      4. Enable the user and force ZAP to authenticate as them during
+         spider/active scan.
+
+    Real-world auth is messier than this — CSRF tokens, JWT refresh, OAuth
+    redirects — but for MVP this covers the common "login form posts
+    username+password" case.
+    """
+    from urllib.parse import quote
+    login_url = auth["login_url"]
+    user_field = auth.get("username_field") or "username"
+    pass_field = auth.get("password_field") or "password"
+    # ZAP's form-auth wants the POST body template with `{%username%}` and
+    # `{%password%}` placeholders. ZAP substitutes them at runtime from the
+    # User record.
+    body_template = f"{user_field}={{%username%}}&{pass_field}={{%password%}}"
+
+    # Step 1 — authentication method.
+    auth_config = (
+        f"loginUrl={quote(login_url, safe='')}"
+        f"&loginRequestData={quote(body_template, safe='')}"
+    )
+    _get(
+        client,
+        "/JSON/authentication/action/setAuthenticationMethod/",
+        contextId=context_id,
+        authMethodName="formBasedAuthentication",
+        authMethodConfigParams=auth_config,
+    )
+
+    # Step 2 — logged-in indicator (optional but strongly recommended).
+    if regex := auth.get("logged_in_regex"):
+        try:
+            _get(
+                client,
+                "/JSON/authentication/action/setLoggedInIndicator/",
+                contextId=context_id,
+                loggedInIndicatorRegex=regex,
+            )
+        except Exception as exc:
+            log.warning("Failed to set logged-in indicator: %s", exc)
+
+    # Step 3 — create the user.
+    user_resp = _get(
+        client,
+        "/JSON/users/action/newUser/",
+        contextId=context_id,
+        name="cybercore-scan-user",
+    )
+    user_id = str(user_resp.get("userId"))
+
+    cred_params = (
+        f"username={quote(auth['username'], safe='')}"
+        f"&password={quote(auth['password'], safe='')}"
+    )
+    _get(
+        client,
+        "/JSON/users/action/setAuthenticationCredentials/",
+        contextId=context_id,
+        userId=user_id,
+        authCredentialsConfigParams=cred_params,
+    )
+    _get(
+        client,
+        "/JSON/users/action/setUserEnabled/",
+        contextId=context_id,
+        userId=user_id,
+        enabled="true",
+    )
+
+    # Step 4 — make spider + active scan run AS this user.
+    _get(
+        client,
+        "/JSON/forcedUser/action/setForcedUser/",
+        contextId=context_id,
+        userId=user_id,
+    )
+    _get(
+        client,
+        "/JSON/forcedUser/action/setForcedUserModeEnabled/",
+        boolean="true",
+    )
+    log.info("Form auth configured (user %s on context %s)", user_id, context_id)
+
+
+def _clear_forced_user(client: httpx.Client) -> None:
+    """Disable forced-user mode so the next job doesn't inherit it."""
+    try:
+        _get(
+            client,
+            "/JSON/forcedUser/action/setForcedUserModeEnabled/",
+            boolean="false",
+        )
+    except Exception as exc:
+        log.debug("forced-user cleanup failed: %s", exc)
+
+
 def _run_spider(
     client: httpx.Client,
     context_name: str,
@@ -399,6 +554,7 @@ def run(
     discovery_mode: str = "spider",
     openapi_url: str | None = None,
     exclude_paths: list[str] | None = None,
+    auth: dict | None = None,
 ) -> list[dict]:
     """
     Run a full DAST sequence and return the raw ZAP alerts list.
@@ -434,6 +590,21 @@ def run(
             target_url,
             exclude_paths=exclude_paths,
         )
+
+        # Configure authentication BEFORE discovery so the spider/AJAX-spider
+        # are walking the app already logged in. Without this, ZAP would
+        # crawl only the public surface and miss authenticated routes.
+        bearer_applied = False
+        if auth:
+            auth_type = (auth.get("type") or "").lower()
+            if auth_type == "bearer" and auth.get("token"):
+                _configure_bearer_auth(client, auth["token"])
+                bearer_applied = True
+            elif auth_type == "form":
+                _configure_form_auth(client, context_id, auth)
+            else:
+                log.warning("Unknown auth type %r — skipping auth setup", auth_type)
+
         try:
             # ── Discovery phase ────────────────────────────────────────────
             if discovery_mode == "spider":
@@ -452,4 +623,11 @@ def run(
 
             return _collect_alerts(client, target_url)
         finally:
+            # Auth cleanup runs even if the scan failed mid-way. Otherwise a
+            # bearer token from a crashed job would silently apply to the
+            # next scan that uses the same ZAP daemon.
+            if bearer_applied:
+                _clear_bearer_auth(client)
+            if auth and (auth.get("type") or "").lower() == "form":
+                _clear_forced_user(client)
             _cleanup_context(client, context_name)

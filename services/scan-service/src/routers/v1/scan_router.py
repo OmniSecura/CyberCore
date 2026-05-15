@@ -4,7 +4,7 @@ import os
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, Form, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, Form, Response, status
 from sqlalchemy.orm import Session
 
 from ...database.db_connection import get_db
@@ -202,6 +202,33 @@ async def list_findings(
         items=items,
         severity_counts=severity_counts,
         truncated=(offset + len(items)) < total,
+    )
+
+
+# ── Export findings ────────────────────────────────────────────────────────────
+
+@scan_router.get(
+    "/organizations/{slug}/scans/{job_id}/export",
+)
+async def export_findings(
+    slug: str,
+    job_id: str,
+    request: Request,
+    format: str = Query(default="json", regex="^(json|html)$"),
+    svc: ScanService = Depends(_svc),
+    _priv: None = require_org_privilege("scans.view"),
+):
+    """
+    Stream a JSON or HTML report of the scan back as a file download. The
+    body is fully built server-side (no streaming or large queries) because
+    even big scans rarely exceed a few MB once serialised.
+    """
+    org_id = await _resolve_org_id(slug, request)
+    content, content_type, filename = svc.export_findings(org_id, job_id, format)
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
