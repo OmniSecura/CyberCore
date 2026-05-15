@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CyberCore Docs — DAST Worker</title>
+  <link rel="stylesheet" href="assets/style.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css"/>
+</head>
+<body>
+
+<header class="site-header">
+  <button class="hamburger" id="hamburger" aria-label="Toggle navigation">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+      <rect y="3" width="20" height="2" rx="1"/><rect y="9" width="20" height="2" rx="1"/><rect y="15" width="20" height="2" rx="1"/>
+    </svg>
+  </button>
+  <div class="logo">🛡️ Cyber<span>Core</span> <span class="version">v0.1.0</span></div>
+  <nav>
+    <a href="https://github.com/OmniSecura/CyberCore" target="_blank">GitHub</a>
+    <a href="getting-started.html">Quick Start</a>
+    <a href="api-scans.html">Scans API</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="sidebar"><div id="nav-container"></div></aside>
+
+  <main class="content">
+    <h1>DAST Worker</h1>
+    <div class="page-meta">
+      <span class="badge purple">Celery</span>
+      <span class="badge blue">Redis</span>
+      <span class="badge red">OWASP ZAP</span>
+      <span class="badge gray">Queue: dast</span>
+    </div>
+    <p class="lead">The dast-worker is a Celery process that runs Dynamic Application
+    Security Testing scans against live web applications. Unlike SAST, which analyses
+    source code at rest, DAST drives the <strong>OWASP ZAP</strong> proxy/scanner over
+    its REST API to crawl, fingerprint, and attack a running target.</p>
+
+    <div class="toc">
+      <div class="toc-title">On this page</div>
+      <ul>
+        <li><a href="#architecture">Architecture</a></li>
+        <li><a href="#profiles">Scan profiles</a></li>
+        <li><a href="#discovery">Discovery modes</a></li>
+        <li><a href="#auth">Authentication modes</a></li>
+        <li><a href="#exclude">Exclude paths</a></li>
+        <li><a href="#pipeline">Execution pipeline</a></li>
+        <li><a href="#findings">Findings format</a></li>
+        <li><a href="#safeguards">Safeguards</a></li>
+        <li><a href="#config">Configuration</a></li>
+        <li><a href="#concurrency">Concurrency &amp; limits</a></li>
+        <li><a href="#troubleshooting">Troubleshooting</a></li>
+      </ul>
+    </div>
+
+    <h2 id="architecture">Architecture</h2>
+    <p>The DAST pipeline reuses the SAST scan-service and the shared <code>scan_jobs</code> /
+    <code>scan_findings</code> tables. What differs is the queue (<code>dast</code>),
+    the worker process, and the analysis engine (ZAP rather than Bandit/Semgrep/etc.).</p>
+
+    <pre><code class="language-text">Client / UI
+    │  POST /scans/web
+    ▼
+scan-service ──► MySQL: ScanJob (scan_type='dast')
+    │  send_task(queue='dast', kwargs={auth})
+    ▼
+Redis: dast queue
+    │  consume + ACK
+    ▼
+dast-worker  ──► ZAP daemon (REST API on :8090)
+                    │
+                    ▼
+              skanowana apka (HTTP requests with attack/probe payloads)
+                    │
+                    ▼
+              alerts collected back
+    │
+    ▼
+MySQL: ScanFinding rows (tool='zap')</code></pre>
+
+    <div class="callout info">
+      <div class="callout-title">Credentials never persist</div>
+      <p>When the user supplies a token, cookie, or login credentials, they travel through
+      the Celery broker message in Redis — <strong>never</strong> to the database. After
+      the worker ACKs the task the message is dropped from the broker. The visible
+      <code>extra.auth_type</code> on the scan job is just a label for the UI.</p>
+    </div>
+
+    <h2 id="profiles">Scan Profiles</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Profile</th><th>What ZAP does</th><th>Payloads sent?</th><th>Runtime</th><th>Use when</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>passive</code></td>
+            <td>Discovery + passive analysis (headers, cookies, TLS, info disclosure)</td>
+            <td><strong>No</strong></td>
+            <td>2 – 15 min</td>
+            <td>First test on any target; safe even when ownership is uncertain</td>
+          </tr>
+          <tr>
+            <td><code>active</code></td>
+            <td>Discovery + passive + real attack payloads (SQLi, XSS, command injection, SSRF, XXE, path traversal)</td>
+            <td><strong>Yes — real attacks</strong></td>
+            <td>15 min – 1 h+</td>
+            <td>Only on apps you own. Will create test rows, may trigger destructive endpoints if not excluded.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout danger">
+      <div class="callout-title">Active scans are real attacks</div>
+      <p>An active scan sends payloads like <code>' OR 1=1 --</code>, <code>&lt;script&gt;alert(1)&lt;/script&gt;</code>,
+      <code>; rm -rf /</code> etc. to every parameter on every discovered endpoint. Only
+      run them against targets you own or have explicit written permission to test.</p>
+    </div>
+
+    <h2 id="discovery">Discovery Modes</h2>
+    <p>Discovery is the phase that populates ZAP's site tree with endpoints to scan.
+    You pick exactly one mode per job.</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Mode</th><th>How it works</th><th>Best for</th><th>Caveats</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>spider</code></td>
+            <td>Classic HTTP crawler — fetches the target, follows <code>&lt;a&gt;</code> and <code>&lt;form&gt;</code> links.</td>
+            <td>Server-rendered websites</td>
+            <td>Cannot see JS-rendered routes (React/Vue/Angular).</td>
+          </tr>
+          <tr>
+            <td><code>ajax_spider</code></td>
+            <td>Headless browser (HtmlUnit) walks the SPA, clicks elements, follows XHR.</td>
+            <td>Single-page apps</td>
+            <td>~5× slower than spider; needs more time budget.</td>
+          </tr>
+          <tr>
+            <td><code>openapi</code></td>
+            <td>ZAP imports an OpenAPI/Swagger spec from a URL, populates the site tree directly.</td>
+            <td>REST APIs (FastAPI, Express, Flask-RESTX)</td>
+            <td>Requires the spec to be reachable from the worker.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="auth">Authentication Modes</h2>
+    <p>Without authentication, ZAP only sees public surface (login screen, marketing
+    pages). Configuring auth dramatically increases scan coverage on real applications.</p>
+
+    <h3>bearer — header injection</h3>
+    <p>Adds <code>Authorization: Bearer &lt;token&gt;</code> to every outgoing ZAP request via
+    the Replacer add-on. Works for any API that accepts a bearer header.</p>
+    <pre><code class="language-json">{
+  "type": "bearer",
+  "token": "eyJhbGciOiJIUzI1NiI..."
+}</code></pre>
+
+    <h3>cookie — Cookie header injection</h3>
+    <p>Adds a raw <code>Cookie: ...</code> header to every request. Designed for apps that
+    use <strong>httpOnly</strong> session cookies (so JavaScript can't read them) — the user
+    logs in via a normal browser, copies the cookie value from DevTools, and pastes it in.</p>
+    <pre><code class="language-json">{
+  "type": "cookie",
+  "cookie": "access_token=eyJ...; refresh_token=eyJ..."
+}</code></pre>
+
+    <h3>form — form-encoded login</h3>
+    <p>ZAP performs a classic <code>application/x-www-form-urlencoded</code> login itself
+    and reuses the resulting session. Suitable for HTML forms.</p>
+    <pre><code class="language-json">{
+  "type": "form",
+  "login_url": "https://app.example.com/login",
+  "username": "alice",
+  "password": "s3cret",
+  "username_field": "username",
+  "password_field": "password"
+}</code></pre>
+
+    <h3>json_form — JSON body login</h3>
+    <p>For modern APIs (FastAPI, Express) whose login endpoint expects a JSON body
+    rather than form-encoded data. The user supplies a <strong>free-form body template</strong>
+    with the literal placeholders <code>{%username%}</code> and <code>{%password%}</code>
+    that ZAP substitutes at runtime.</p>
+    <pre><code class="language-json">{
+  "type": "json_form",
+  "login_url": "http://api.example.com/v1/users/login",
+  "username": "alice@example.com",
+  "password": "s3cret",
+  "body_template": "{\"email\":\"{%username%}\",\"password\":\"{%password%}\",\"remember_me\":true}"
+}</code></pre>
+
+    <div class="callout info">
+      <div class="callout-title">Custom request bodies</div>
+      <p>The <code>body_template</code> field is intentionally free-form — your login endpoint
+      can require any combination of extra fields (client IDs, device fingerprints, nested
+      envelopes) and the template covers them all. The schema validator ensures the body
+      is valid JSON and contains both placeholders before queuing the scan.</p>
+    </div>
+
+    <h3>Credential cleanup</h3>
+    <p>Whether the scan succeeds, fails, or is cancelled mid-run, the worker's
+    <code>finally</code> block:</p>
+    <ul>
+      <li>Removes the Replacer rule (bearer / cookie modes) so the next job doesn't inherit it.</li>
+      <li>Disables forced-user mode (form / json_form modes).</li>
+      <li>Deletes the ZAP context.</li>
+    </ul>
+
+    <h2 id="exclude">Exclude Paths</h2>
+    <p>Paths or patterns the worker should keep out of scope. Critical for active scans:
+    without exclusions, ZAP will happily POST attack payloads to <code>/users/me</code>
+    DELETE, <code>/admin/wipe-database</code>, etc.</p>
+
+    <p>Three input forms are accepted:</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Input</th><th>Expanded regex</th><th>Use</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>/logout</code></td>
+            <td><code>https?://host\.com(:\d+)?/logout</code></td>
+            <td>Exact path match</td>
+          </tr>
+          <tr>
+            <td><code>/admin/*</code></td>
+            <td><code>https?://host\.com(:\d+)?/admin/.*</code></td>
+            <td>Glob — shell-style wildcards</td>
+          </tr>
+          <tr>
+            <td><code>^.*\.json$</code></td>
+            <td>passed through verbatim</td>
+            <td>Raw regex — anything not starting with <code>/</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Limits: max 20 entries per scan, 256 characters each. Invalid regex patterns
+    are logged and skipped — they don't crash the scan.</p>
+
+    <h2 id="pipeline">Execution Pipeline</h2>
+    <pre><code class="language-text">1. Load ScanJob from DB; flip status → "running"
+     ├─ cancelled / soft-deleted → exit early
+     └─ snapshot target_url, profile, discovery_mode, openapi_url,
+        exclude_paths from job.extra
+
+2. Read auth payload from Celery kwargs (NOT from job.extra)
+
+3. Wait for ZAP daemon: poll /JSON/core/view/version/ up to 60 s
+
+4. Create fresh ZAP context (job-<uuid>):
+     ├─ include regex: host pattern from target_url
+     └─ exclude regex: one per exclude_paths entry
+
+5. Configure auth BEFORE discovery:
+     ├─ bearer    → Replacer rule on Authorization header
+     ├─ cookie    → Replacer rule on Cookie header
+     ├─ form      → formBasedAuthentication + user + forced-user mode
+     └─ json_form → jsonBasedAuthentication + user + forced-user mode
+
+6. Run discovery (one of):
+     ├─ spider      → poll /JSON/spider/view/status/ to 100%
+     ├─ ajax_spider → poll /JSON/ajaxSpider/view/status/ to "stopped"
+     └─ openapi     → import via /JSON/openapi/action/importUrl/
+
+7. Drain passive scanner:
+     └─ poll /JSON/pscan/view/recordsToScan/ until 0
+
+8. Optional active scan (profile=='active'):
+     └─ poll /JSON/ascan/view/status/ to 100%
+
+9. Collect alerts: paginated GET /JSON/core/view/alerts/, 200 per page
+
+10. Parse alerts → ScanFinding dicts (zap_parser.py)
+
+11. Deduplicate by fingerprint; bulk insert (500-row chunks)
+
+12. Update job: status='completed', findings_count=N, completed_at=now()
+
+13. Cleanup (always — even on failure):
+     ├─ remove Replacer rules
+     ├─ disable forced-user mode
+     └─ remove ZAP context</code></pre>
+
+    <p>Each long-running phase updates <code>job.extra.progress</code> and
+    <code>job.extra.current_phase</code> every 5 seconds so the dashboard can show
+    live progress.</p>
+
+    <h2 id="findings">Findings Format</h2>
+    <p>ZAP alerts are normalised by <code>zap_parser.py</code> into the shared
+    <code>ScanFinding</code> shape so the dashboard renders DAST and SAST results
+    identically. DAST-specific mappings:</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>ScanFinding column</th><th>DAST value</th></tr></thead>
+        <tbody>
+          <tr><td><code>tool</code></td><td><code>'zap'</code></td></tr>
+          <tr><td><code>rule_id</code></td><td>ZAP plugin ID (e.g. <code>10021</code>, <code>40018</code>)</td></tr>
+          <tr><td><code>severity</code></td><td>Mapped from ZAP <code>risk</code> — high, medium, low, info (ZAP's "informational" → "info")</td></tr>
+          <tr><td><code>confidence</code></td><td>From ZAP confidence — user-confirmed/high → "high", medium → "medium", low/false-positive → "low"</td></tr>
+          <tr><td><code>file_path</code></td><td>The URL of the affected endpoint (column reused from SAST)</td></tr>
+          <tr><td><code>line_start</code> / <code>line_end</code></td><td><code>NULL</code> (URLs have no lines)</td></tr>
+          <tr><td><code>code_snippet</code></td><td>ZAP <em>evidence</em> string — the request fragment that triggered the alert</td></tr>
+          <tr><td><code>message</code></td><td>Description, method, parameter, attack payload, evidence, and suggested fix, joined with blank lines</td></tr>
+          <tr><td><code>cwe</code></td><td>Normalised as <code>CWE-NNN</code></td></tr>
+          <tr><td><code>fingerprint</code></td><td>SHA-256 of <code>rule_id : url : param : evidence</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="safeguards">Safeguards</h2>
+
+    <h3>URL validation (scan-service)</h3>
+    <pre><code class="language-python">_ALLOWED_WEB_SCHEMES = ("http", "https")
+
+# Private/loopback IPs literally written in the URL are rejected.
+# 127.0.0.0/8, 10/8, 172.16/12, 192.168/16, 169.254/16 (link-local),
+# multicast, reserved, unspecified, and the string "localhost".
+if _is_private_or_local(host):
+    raise ValueError("Cannot scan private, loopback, or link-local addresses.")</code></pre>
+    <p>Hostnames (e.g. <code>auth</code>, <code>dashboard</code>) pass through —
+    they are not IP literals. The worker reaches them over the internal
+    <code>cybercore_net</code> Docker network.</p>
+
+    <h3>Per-organisation quota</h3>
+    <p>The shared SAST/DAST quota applies to both types together:</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Limit</th><th>Default</th><th>Env var</th></tr></thead>
+        <tbody>
+          <tr><td>Active scans (queued + running)</td><td>3 per org</td><td><code>SCAN_FREE_PLAN_ACTIVE_LIMIT</code></td></tr>
+          <tr><td>Scans started in last 24 h</td><td>3 per org</td><td><code>SCAN_FREE_PLAN_DAILY_LIMIT</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Security headers across CyberCore services</h3>
+    <p>Auth-service, organization-service, and scan-service all run a
+    <code>SecurityHeadersMiddleware</code> that sets:</p>
+    <pre><code class="language-text">X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: strict-origin-when-cross-origin
+Permissions-Policy: camera=(), microphone=(), geolocation=()</code></pre>
+    <p>This closes the baseline findings ZAP would otherwise raise on every FastAPI
+    response.</p>
+
+    <h2 id="config">Configuration</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Env var</th><th>Default</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>CELERY_BROKER_URL</code></td><td><code>redis://localhost:6379/0</code></td><td>Redis broker (same as SAST worker)</td></tr>
+          <tr><td><code>CELERY_RESULT_BACKEND</code></td><td><code>redis://localhost:6379/0</code></td><td>Redis result backend</td></tr>
+          <tr><td><code>ZAP_HOST</code></td><td><code>zap</code></td><td>Hostname of the ZAP daemon container</td></tr>
+          <tr><td><code>ZAP_PORT</code></td><td>8090</td><td>ZAP REST API port</td></tr>
+          <tr><td><code>ZAP_API_KEY</code></td><td><em>required in prod</em></td><td>Shared secret for the ZAP API</td></tr>
+          <tr><td><code>ZAP_POLL_INTERVAL_SEC</code></td><td>5</td><td>Polling interval for long-running phases</td></tr>
+          <tr><td><code>ZAP_TIMEOUT_SPIDER_MIN</code></td><td>10</td><td>Spider phase timeout</td></tr>
+          <tr><td><code>ZAP_TIMEOUT_AJAX_SPIDER_MIN</code></td><td>20</td><td>AJAX spider phase timeout</td></tr>
+          <tr><td><code>ZAP_TIMEOUT_PASSIVE_MIN</code></td><td>10</td><td>Passive drain timeout</td></tr>
+          <tr><td><code>ZAP_TIMEOUT_ACTIVE_MIN</code></td><td>45</td><td>Active scan timeout</td></tr>
+          <tr><td><code>ZAP_TIMEOUT_OPENAPI_MIN</code></td><td>5</td><td>OpenAPI import timeout</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Generating ZAP_API_KEY</h3>
+    <pre><code class="language-bash"># Linux / macOS / WSL
+openssl rand -hex 32
+
+# PowerShell
+-join ((1..32) | ForEach-Object { '{0:x}' -f (Get-Random -Max 16) })</code></pre>
+
+    <h3>Starting the worker</h3>
+    <p>The dast-worker container uses the same image as the SAST worker but is started
+    with a different CMD:</p>
+    <pre><code class="language-bash">python -m celery -A src.celery_app:celery_app worker \
+  --loglevel=INFO \
+  --queues=dast \
+  --concurrency=1 \
+  --hostname=dast-worker@%h</code></pre>
+
+    <h2 id="concurrency">Concurrency &amp; Limits</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Limit</th><th>Value</th><th>Where</th></tr></thead>
+        <tbody>
+          <tr><td>Hard task timeout</td><td>75 minutes</td><td><code>tasks/dast.py</code> decorator</td></tr>
+          <tr><td>Soft task timeout</td><td>73 minutes</td><td><code>tasks/dast.py</code> decorator</td></tr>
+          <tr><td>Worker concurrency</td><td>1</td><td>docker-compose <code>--concurrency=1</code></td></tr>
+          <tr><td>ZAP daemons</td><td>1</td><td>Shared bottleneck — passive scanner has a single queue</td></tr>
+          <tr><td>Active scans per organisation</td><td>3</td><td>Quota check on submit</td></tr>
+          <tr><td>Alerts per page</td><td>200</td><td>Pagination in <code>_collect_alerts</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout info">
+      <div class="callout-title">Why concurrency=1?</div>
+      <p>A single ZAP daemon shares state between scans — passive scanner queue, active
+      scanner thread pool, alert store. Running two scans concurrently against the same
+      daemon would mix progress and slow both down without freeing up resources. To
+      scale horizontally, run multiple ZAP daemons each paired with one dast-worker.</p>
+    </div>
+
+    <h2 id="troubleshooting">Troubleshooting</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Symptom</th><th>Cause</th><th>Fix</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Scan stuck in <code>queued</code></td>
+            <td>Worker not listening on the <code>dast</code> queue</td>
+            <td><code>docker compose logs dast-worker</code> — look for <code>Connected to redis://...</code></td>
+          </tr>
+          <tr>
+            <td><code>ZAP daemon not reachable</code> in worker logs</td>
+            <td>ZAP daemon still booting (takes 10–30 s)</td>
+            <td>The runner has its own retry loop — the first scan after a fresh start may take a minute longer.</td>
+          </tr>
+          <tr>
+            <td>Active scan returns 0 findings</td>
+            <td>Auth not working — ZAP scanned as anonymous user</td>
+            <td>Verify token/cookie freshness, check <code>extra.auth_type</code> on the job</td>
+          </tr>
+          <tr>
+            <td>Only <code>/openapi.json</code>, <code>/docs</code>, <code>/health</code> in findings</td>
+            <td>Spider only saw the public surface — login screen blocked deeper access</td>
+            <td>Add auth config (<code>bearer</code>, <code>cookie</code>, or <code>json_form</code>)</td>
+          </tr>
+          <tr>
+            <td><code>body_template must contain {%username%}</code></td>
+            <td>Typo in placeholder syntax</td>
+            <td>Use the exact literals <code>{%username%}</code> and <code>{%password%}</code></td>
+          </tr>
+          <tr>
+            <td>Next scan inherits previous scan's results</td>
+            <td>ZAP daemon retained state after a hard crash</td>
+            <td><code>docker compose restart zap</code></td>
+          </tr>
+          <tr>
+            <td><code>Cannot scan private, loopback...</code> (422)</td>
+            <td>Target URL uses an IP literal in RFC1918 / localhost</td>
+            <td>Use the container hostname (<code>auth</code>, <code>dashboard</code>) instead of the IP</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+<script src="assets/nav.js"></script>
+</body>
+</html>

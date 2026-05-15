@@ -42,6 +42,17 @@
       </ul>
     </div>
 
+    <div class="callout info">
+      <div class="callout-title">SAST and DAST share most endpoints</div>
+      <p>Submitting a scan uses a type-specific endpoint (<code>/scans/git</code>,
+      <code>/scans/upload</code>, or <code>/scans/web</code>) but all the rest —
+      listing, stats, detail, findings, cancel, delete, export — work for both
+      <code>sast</code> and <code>dast</code> scans without distinction. The
+      <code>scan_type</code> field in each response tells you which engine produced
+      the results. See <a href="workers-dast.html">DAST Worker</a> for ZAP-specific
+      details.</p>
+    </div>
+
     <!-- SUBMIT GIT -->
     <div class="endpoint" id="submit-git">
       <div class="endpoint-header">
