@@ -1060,6 +1060,11 @@ function FindingsContent({ slug, jobId, scan }) {
   const [total, setTotal]               = useState(0)
   const [page, setPage]                 = useState(1)
   const [severityCounts, setSevCounts]  = useState({})
+  // allSevCounts and allTools are populated from unfiltered loads and never
+  // cleared when a filter is active — this keeps the filter UI visible so
+  // the user can always switch to a different filter or clear the current one.
+  const [allSevCounts, setAllSevCounts] = useState({})
+  const [allTools, setAllTools]         = useState([])
   const [loading, setLoading]           = useState(true)
   const [err, setErr]                   = useState(null)
   const [toolFilter, setToolFilter]     = useState(null)
@@ -1086,6 +1091,16 @@ function FindingsContent({ slug, jobId, scan }) {
         setFindings(data.items)
         setTotal(data.total)
         setSevCounts(data.severity_counts || {})
+        // When no tool filter is active we have the full picture — lock in
+        // severity counts and the tool list so they stay visible even after
+        // the user narrows down with a filter.
+        if (!toolFilter) {
+          setAllSevCounts(data.severity_counts || {})
+          const tools = [...new Set(data.items.map(f => f.tool).filter(Boolean))]
+          if (tools.length > 0) {
+            setAllTools(prev => [...new Set([...prev, ...tools])])
+          }
+        }
         setLoading(false)
       })
       .catch(ex => { setErr(ex?.data?.detail || 'Failed to load findings.'); setLoading(false) })
@@ -1121,21 +1136,26 @@ function FindingsContent({ slug, jobId, scan }) {
   }
   const tools = Object.keys(byTool)
 
-  // Severity totals for the summary bar
-  const hasCounts = SEVERITY_ORDER.some(s => severityCounts[s] > 0)
+  // Severity totals for the summary bar — prefer allSevCounts (unfiltered)
+  // so the bar doesn't go blank when the user activates a severity filter.
+  const displayCounts = SEVERITY_ORDER.some(s => allSevCounts[s] > 0) ? allSevCounts : severityCounts
+  const hasCounts = SEVERITY_ORDER.some(s => displayCounts[s] > 0)
 
   return (
     <div>
-      {/* Severity summary bar */}
+      {/* Severity summary bar — always rendered from allSevCounts (the
+          unfiltered snapshot) so chips don't disappear when a filter is on.
+          The active chip is highlighted; clicking the same chip toggles it
+          off; clicking a different one switches directly. */}
       <div className="sc-sev-bar">
         {hasCounts ? (
-          SEVERITY_ORDER.map(s => severityCounts[s] > 0 && (
+          SEVERITY_ORDER.map(s => displayCounts[s] > 0 && (
             <button
               key={s}
               className={`sc-sev-chip sc-sev--${s}${sevFilter === s ? ' sc-sev-chip--on' : ''}`}
               onClick={() => setSevFilter(f => f === s ? null : s)}
             >
-              <span className="sc-sev-chip-num">{severityCounts[s]}</span>
+              <span className="sc-sev-chip-num">{displayCounts[s]}</span>
               {s}
             </button>
           ))
@@ -1151,21 +1171,26 @@ function FindingsContent({ slug, jobId, scan }) {
         )}
       </div>
 
-      {/* Tool filter tabs — always visible when more than one tool present.
-          The two filters are independent: severity narrows by severity AND
-          tool narrows by tool, both applied server-side. */}
-      {tools.length > 1 && (
+      {/* Tool filter tabs — rendered from allTools (the unfiltered snapshot)
+          so they stay visible even when a filter is active. This means the
+          user can always switch to a different tool or click "All" to clear.
+          Counts per tab come from byTool (current page) and are shown only
+          when data is present so no stale "0" appears for inactive tabs. */}
+      {allTools.length > 1 && (
         <div className="sc-tool-tabs">
           <button className={`sc-tool-tab${!toolFilter ? ' sc-tool-tab--on' : ''}`} onClick={() => setToolFilter(null)}>
-            All <span className="sc-tool-count">{total}</span>
+            All {!toolFilter && <span className="sc-tool-count">{total}</span>}
           </button>
-          {tools.map(tool => (
+          {allTools.map(tool => (
             <button
               key={tool}
               className={`sc-tool-tab${toolFilter === tool ? ' sc-tool-tab--on' : ''}`}
               onClick={() => setToolFilter(t => t === tool ? null : tool)}
             >
-              {tool} <span className="sc-tool-count">{byTool[tool].length}</span>
+              {tool}
+              {byTool[tool] != null && (
+                <span className="sc-tool-count">{byTool[tool].length}</span>
+              )}
             </button>
           ))}
         </div>
