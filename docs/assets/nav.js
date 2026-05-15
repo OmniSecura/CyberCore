@@ -41,6 +41,7 @@ const NAV_ITEMS = [
     items: [
       { label: "Docker & Deployment", href: "deployment-docker.html" },
       { label: "SAST Worker",         href: "workers-sast.html" },
+      { label: "DAST Worker",         href: "workers-dast.html" },
       { label: "Database Schema",     href: "database-schema.html" },
     ]
   },
