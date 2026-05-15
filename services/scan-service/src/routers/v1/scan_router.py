@@ -16,6 +16,7 @@ from ...schemas.scan import (
     ScanJobListOut,
     ScanStatusCountsOut,
     FindingsListOut,
+    OrgSummaryOut,
 )
 from ...security.cache import org_id_cache
 from ...security.http_client import get_org_service_client
@@ -141,6 +142,28 @@ async def list_scans(
     org_id = await _resolve_org_id(slug, request)
     total, items = svc.list_jobs(org_id, offset, limit, status_filter)
     return ScanJobListOut(total=total, items=items)
+
+
+# ── Org summary (dashboard overview) ──────────────────────────────────────────
+
+@scan_router.get(
+    "/organizations/{slug}/scans/summary",
+    response_model=OrgSummaryOut,
+)
+async def org_summary(
+    slug: str,
+    request: Request,
+    svc: ScanService = Depends(_svc),
+    _priv: None = require_org_privilege("scans.view"),
+):
+    """
+    Aggregate payload for the org dashboard overview tab.
+
+    Returns severity distribution (across all findings for the org), live
+    status counts, and the 8 most recent scans — all in a single DB pass.
+    """
+    org_id = await _resolve_org_id(slug, request)
+    return OrgSummaryOut(**svc.get_org_summary(org_id))
 
 
 # ── Stats (per-status counts) ──────────────────────────────────────────────────

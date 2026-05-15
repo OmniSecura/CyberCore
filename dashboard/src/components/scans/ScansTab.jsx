@@ -985,6 +985,35 @@ function splitFilePath(filePath) {
   return { dir: normalized.slice(0, idx + 1), filename: normalized.slice(idx + 1) }
 }
 
+/** Map confidence string → 0-100 for the progress bar. */
+function confidencePct(conf) {
+  if (!conf) return null
+  switch (conf.toLowerCase()) {
+    case 'confirmed':                         return 100
+    case 'high':                              return 88
+    case 'probable': case 'medium':           return 65
+    case 'tentative': case 'low':             return 35
+    case 'false positive':                    return 10
+    default:                                  return null
+  }
+}
+
+/** Confidence bar — only rendered when a confidence value is present. */
+function ConfBar({ confidence }) {
+  const pct = confidencePct(confidence)
+  if (pct === null) return null
+  // Colour goes from teal (high) through amber (medium) to muted (low)
+  const fill = pct >= 80 ? '#00C2CB' : pct >= 55 ? '#D97706' : '#AABBC8'
+  return (
+    <div className="sc-conf-wrap">
+      <div className="sc-conf-bar">
+        <div className="sc-conf-fill" style={{ width: `${pct}%`, background: fill }} />
+      </div>
+      <span className="sc-conf-pct">{pct}%</span>
+    </div>
+  )
+}
+
 function FindingRow({ finding }) {
   const [open, setOpen]       = useState(false)
   const [copied, setCopied]   = useState(false)
@@ -1009,6 +1038,8 @@ function FindingRow({ finding }) {
             <span className="sc-finding-line">:{finding.line_start}</span>
           )}
         </span>
+        {finding.tool && <span className="sc-tool-pill">{finding.tool}</span>}
+        <ConfBar confidence={finding.confidence} />
         <IconChevron open={open} />
       </button>
 
@@ -1143,33 +1174,36 @@ function FindingsContent({ slug, jobId, scan }) {
 
   return (
     <div>
-      {/* Severity summary bar — always rendered from allSevCounts (the
-          unfiltered snapshot) so chips don't disappear when a filter is on.
-          The active chip is highlighted; clicking the same chip toggles it
-          off; clicking a different one switches directly. */}
-      <div className="sc-sev-bar">
-        {hasCounts ? (
-          SEVERITY_ORDER.map(s => displayCounts[s] > 0 && (
+      {/* Severity stat cards — big-number cards for each severity level.
+          Always rendered from displayCounts (unfiltered snapshot) so they
+          stay visible after the user activates a filter. Clicking a card
+          toggles the severity filter; clicking the active one clears it. */}
+      {hasCounts ? (
+        <div className="sc-sev-cards">
+          {SEVERITY_ORDER.map(s => displayCounts[s] > 0 && (
             <button
               key={s}
-              className={`sc-sev-chip sc-sev--${s}${sevFilter === s ? ' sc-sev-chip--on' : ''}`}
+              className={`sc-sev-card sc-sev-card--${s}${sevFilter === s ? ' sc-sev-card--on' : ''}`}
               onClick={() => setSevFilter(f => f === s ? null : s)}
             >
-              <span className="sc-sev-chip-num">{displayCounts[s]}</span>
-              {s}
+              <div className="sc-sev-card-label">{s}</div>
+              <div className="sc-sev-card-val">{displayCounts[s]}</div>
             </button>
-          ))
-        ) : (
-          !loading && (
-            <span className="sc-sev-ok">✓ No findings</span>
-          )
-        )}
-        {sevFilter && (
-          <button className="sc-clear-filter" onClick={() => setSevFilter(null)}>
-            <IconX /> Clear filter
-          </button>
-        )}
-      </div>
+          ))}
+          {sevFilter && (
+            <button
+              className="sc-sev-card"
+              style={{ background: '#F4F8FC', color: '#8899AA', border: '2px dashed #D6E4F0' }}
+              onClick={() => setSevFilter(null)}
+            >
+              <div className="sc-sev-card-label">Filter</div>
+              <div className="sc-sev-card-val" style={{ fontSize: 13, marginTop: 8 }}>Clear ×</div>
+            </button>
+          )}
+        </div>
+      ) : (
+        !loading && <div className="sc-sev-bar"><span className="sc-sev-ok">✓ No findings</span></div>
+      )}
 
       {/* Tool filter tabs — rendered from allTools (the unfiltered snapshot)
           so they stay visible even when a filter is active. This means the
@@ -1468,7 +1502,8 @@ function ScanDetail({ slug, jobId, has, onBack }) {
   const [cancelling, setCancelling] = useState(false)
   const [deleting, setDeleting]   = useState(false)
   const [confirmDel, setConfirmDel] = useState(false)
-  const [exportOpen, setExportOpen] = useState(false)
+  const [exportOpen, setExportOpen]   = useState(false)
+  const [rescanning, setRescanning]   = useState(false)
   const pollRef = useRef(null)
   const exportMenuRef = useRef(null)
 
@@ -1542,6 +1577,25 @@ function ScanDetail({ slug, jobId, has, onBack }) {
     }
   }
 
+  // Re-submit the same scan (only meaningful for git scans — upload scans
+  // can't be re-run without the original file, and DAST credentials aren't
+  // stored server-side). On success we navigate directly to the new job.
+  async function doRescan() {
+    if (!scan || scan.target_type !== 'git_url') return
+    setRescanning(true)
+    try {
+      await scanApi.submitGit(slug, {
+        name: scan.name,
+        target_url: scan.target_url,
+      })
+      onBack()  // go back to list — the new job will appear there
+    } catch (ex) {
+      alert(ex?.data?.detail || 'Failed to re-submit scan.')
+    } finally {
+      setRescanning(false)
+    }
+  }
+
   async function doDelete() {
     setDeleting(true)
     try {
@@ -1605,6 +1659,24 @@ function ScanDetail({ slug, jobId, has, onBack }) {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+          {/* Rescan — only for git-based SAST scans (upload can't be re-run,
+              DAST creds are not stored). Only shown when scan is complete/failed. */}
+          {!isActive && scan.target_type === 'git_url' && has('scans.run') && (
+            <button
+              className="cc-btn cc-btn-md cc-btn-primary"
+              onClick={doRescan}
+              disabled={rescanning}
+              type="button"
+            >
+              {rescanning ? <><span className="cc-spin" /> Running…</> : <>
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M13.5 2.5v4h-4"/><path d="M2.5 8A5.5 5.5 0 0 1 13.1 5.4"/>
+                  <path d="M2.5 13.5v-4h4"/><path d="M13.5 8A5.5 5.5 0 0 1 2.9 10.6"/>
+                </svg>
+                Rescan
+              </>}
+            </button>
+          )}
           {/* Export — only meaningful once the scan has produced findings */}
           {!isActive && (
             <div ref={exportMenuRef} style={{ position: 'relative' }}>

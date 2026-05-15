@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react'
-import { orgApi, memberApi, inviteApi, userApi, roleApi } from '../../api/endpoints'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { orgApi, memberApi, inviteApi, userApi, roleApi, scanApi } from '../../api/endpoints'
 import { TransferOwnershipModal } from './TransferOwnershipModal'
 import { ScansTab } from '../scans/ScansTab'
 
@@ -590,62 +590,277 @@ function RolesTab({ org, has }) {
   )
 }
 
+// ─── Overview tab helpers ──────────────────────────────────────────────────────
+
+const SEV_COLORS = {
+  critical: '#742A2A',
+  high:     '#C53030',
+  medium:   '#D97706',
+  low:      '#A16207',
+  info:     '#1D4ED8',
+}
+const SEV_ORDER = ['critical', 'high', 'medium', 'low', 'info']
+
+/** Relative time string — "2 min ago", "3h", "yesterday", etc. */
+function relTime(iso) {
+  if (!iso) return ''
+  const diff = Date.now() - new Date(iso).getTime()
+  const s = Math.floor(diff / 1000)
+  if (s <  60)  return 'just now'
+  if (s < 3600) return `${Math.floor(s / 60)} min`
+  if (s < 86400) return `${Math.floor(s / 3600)}h`
+  return `${Math.floor(s / 86400)}d`
+}
+
+/** SVG donut chart — no external library, pure math. */
+function DonutChart({ counts, total }) {
+  const cx = 50, cy = 50, r = 38, innerR = 26
+
+  function polar(angleDeg) {
+    const rad = (angleDeg - 90) * Math.PI / 180
+    return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) }
+  }
+  function innerPolar(angleDeg) {
+    const rad = (angleDeg - 90) * Math.PI / 180
+    return { x: cx + innerR * Math.cos(rad), y: cy + innerR * Math.sin(rad) }
+  }
+
+  if (!total) {
+    return (
+      <svg viewBox="0 0 100 100" className="ov-donut-svg">
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke="#E6EEF6" strokeWidth={r - innerR} />
+        <text x={cx} y={cy + 4} textAnchor="middle" fontSize="11" fontWeight="700" fill="#8899AA">0</text>
+      </svg>
+    )
+  }
+
+  // Build arc segments
+  let angle = 0
+  const segs = SEV_ORDER.filter(s => counts[s] > 0).map(sev => {
+    const pct = counts[sev] / total
+    const sweep = pct * 360
+    const start = angle
+    const end = angle + sweep - (sweep < 360 ? 0.3 : 0) // tiny gap
+    angle += sweep
+    return { sev, start, end, sweep }
+  })
+
+  const paths = segs.map(({ sev, start, end }) => {
+    const s = polar(start), e = polar(end)
+    const is = innerPolar(end), ie = innerPolar(start)
+    const large = end - start > 180 ? 1 : 0
+    const d = `M ${s.x.toFixed(2)} ${s.y.toFixed(2)}
+      A ${r} ${r} 0 ${large} 1 ${e.x.toFixed(2)} ${e.y.toFixed(2)}
+      L ${is.x.toFixed(2)} ${is.y.toFixed(2)}
+      A ${innerR} ${innerR} 0 ${large} 0 ${ie.x.toFixed(2)} ${ie.y.toFixed(2)}
+      Z`
+    return <path key={sev} d={d} fill={SEV_COLORS[sev]} />
+  })
+
+  return (
+    <svg viewBox="0 0 100 100" className="ov-donut-svg">
+      {paths}
+      <text x={cx} y={cy - 3} textAnchor="middle" fontSize="14" fontWeight="700" fill="#0A1628">
+        {total}
+      </text>
+      <text x={cx} y={cy + 10} textAnchor="middle" fontSize="7" fill="#8899AA">
+        findings
+      </text>
+    </svg>
+  )
+}
+
+/** Activity item derived from a ScanJob */
+function ActivityItem({ scan }) {
+  const statusDot = {
+    completed: 'ov-activity-dot--completed',
+    failed:    'ov-activity-dot--failed',
+    running:   'ov-activity-dot--running',
+    queued:    'ov-activity-dot--queued',
+    cancelled: 'ov-activity-dot--info',
+  }[scan.status] || 'ov-activity-dot--info'
+
+  const verb = {
+    completed: 'Scan complete',
+    failed:    'Scan failed',
+    running:   'Scan running',
+    queued:    'Scan queued',
+    cancelled: 'Scan cancelled',
+  }[scan.status] || 'Scan updated'
+
+  const sub = scan.status === 'completed' && scan.findings_count > 0
+    ? `${scan.findings_count} finding${scan.findings_count !== 1 ? 's' : ''} · ${scan.scan_type?.toUpperCase()}`
+    : `${scan.scan_type?.toUpperCase()} · ${scan.target_url || 'ZIP upload'}`
+
+  return (
+    <div className="ov-activity-item">
+      <div className={`ov-activity-dot ${statusDot}`} />
+      <div className="ov-activity-body">
+        <div className="ov-activity-name">{verb} · {scan.name}</div>
+        <div className="ov-activity-sub">{sub}</div>
+      </div>
+      <div className="ov-activity-time">{relTime(scan.created_at)}</div>
+    </div>
+  )
+}
+
 // ─── Overview tab ─────────────────────────────────────────────────────────────
 
 function OverviewTab({ org }) {
+  const [summary, setSummary]   = useState(null)
+  const [loadErr, setLoadErr]   = useState(null)
+  const pollRef                 = useRef(null)
+
+  const load = useCallback(() => {
+    scanApi.summary(org.organization_slug)
+      .then(setSummary)
+      .catch(err => setLoadErr(err?.data?.detail || 'Failed to load overview.'))
+  }, [org.organization_slug])
+
+  useEffect(() => {
+    load()
+    // Refresh every 30 s so active-scan count stays current while the tab is open
+    pollRef.current = setInterval(load, 30_000)
+    return () => clearInterval(pollRef.current)
+  }, [load])
+
+  const sc = summary?.severity_counts || {}
+  const total = summary?.total_findings || 0
+  const active = (summary?.status_counts?.queued || 0) + (summary?.status_counts?.running || 0)
   const plan = org.plan || 'free'
 
-  const stats = [
-    { label: 'Members', value: org.member_count ?? '—', note: ROLE_LABEL[org.role] ? `You: ${ROLE_LABEL[org.role]}` : '' },
-    { label: 'Agents',  value: '0', note: 'Coming soon' },
-    { label: 'Alerts',  value: '0', note: 'Coming soon' },
-    { label: 'Logs',    value: '0', note: 'Coming soon' },
+  const statCards = [
+    {
+      label: 'Active scans',
+      value: summary ? active : '—',
+      note: active > 0 ? 'running now' : 'none running',
+      noteClass: active > 0 ? 'ov-stat-note--ok' : '',
+    },
+    {
+      label: 'Members',
+      value: org.member_count ?? '—',
+      note: ROLE_LABEL[org.role] ? `You: ${ROLE_LABEL[org.role]}` : '',
+    },
+    {
+      label: 'Alerts 24h',
+      value: '—',
+      note: 'Coming soon',
+    },
+    {
+      label: 'Agents',
+      value: '—',
+      note: 'Coming soon',
+    },
+  ]
+
+  // Placeholder agents — shown once the real feature ships
+  const AGENT_PLACEHOLDER = [
+    { name: 'prod-eu-1', status: 'online' },
+    { name: 'staging-1', status: 'idle' },
+    { name: 'agent-dev', status: 'offline' },
   ]
 
   return (
     <>
-      <div className="cc-stats">
-        {stats.map(s => (
-          <div key={s.label} className="cc-stat-card">
-            <div className="cc-stat-label">{s.label}</div>
-            <div className="cc-stat-val">{s.value}</div>
-            <div className="cc-stat-note">{s.note}</div>
+      {loadErr && <div className="cc-alert cc-alert--err" style={{ marginBottom: 16 }}><IconErr />{loadErr}</div>}
+
+      {/* ── Stat cards ── */}
+      <div className="ov-stats">
+        {statCards.map(s => (
+          <div key={s.label} className="ov-stat">
+            <div className="ov-stat-label">{s.label}</div>
+            <div className={`ov-stat-val${s.accent ? ' ov-stat-val--accent' : ''}`}>
+              {s.value}
+            </div>
+            <div className={`ov-stat-note${s.noteClass ? ' ' + s.noteClass : ''}`}>
+              {s.note}
+            </div>
           </div>
         ))}
       </div>
 
-      <div className="cc-section">
-        <div className="cc-section-head">Details</div>
-        <div className="cc-info-row">
-          <span className="cc-info-k">Name</span>
-          <span className="cc-info-v">{org.organization_name}</span>
-        </div>
-        <div className="cc-info-row">
-          <span className="cc-info-k">Slug</span>
-          <span className="cc-info-v cc-info-v--mono">{org.organization_slug}</span>
-        </div>
-        <div className="cc-info-row">
-          <span className="cc-info-k">Description</span>
-          <span className={`cc-info-v${!org.organization_description ? ' cc-info-v--muted' : ''}`}>
-            {org.organization_description || 'No description'}
-          </span>
-        </div>
-        <div className="cc-info-row">
-          <span className="cc-info-k">Plan</span>
-          <span className="cc-info-v"><span className={`cc-badge cc-badge--${plan}`}>{plan}</span></span>
-        </div>
-        <div className="cc-info-row">
-          <span className="cc-info-k">Status</span>
-          <span className="cc-info-v">
-            <span className={`cc-status${org.is_active ? ' cc-status--active' : ''}`}>
-              <span className="cc-status-dot" />
-              {org.is_active ? 'Active' : 'Inactive'}
+      {/* ── Two-column body ── */}
+      <div className="ov-grid">
+
+        {/* Left: activity feed */}
+        <div className="cc-section" style={{ padding: 0 }}>
+          <div className="ov-activity-head">
+            <span className="ov-activity-title">Recent activity</span>
+            <span className="ov-live-badge">
+              <span className="ov-live-dot" />
+              Live
             </span>
-          </span>
+          </div>
+          <div className="ov-activity-list">
+            {!summary ? (
+              [0,1,2,3].map(i => (
+                <div key={i} className="ov-activity-item">
+                  <span className="cc-skel" style={{ width: 8, height: 8, borderRadius: '50%', display: 'block', flexShrink: 0 }} />
+                  <span className="cc-skel" style={{ flex: 1, height: 12, display: 'block' }} />
+                </div>
+              ))
+            ) : summary.recent_scans.length === 0 ? (
+              <div className="ov-empty-activity">No scans yet — run one to see activity here.</div>
+            ) : (
+              summary.recent_scans.map(s => <ActivityItem key={s.id} scan={s} />)
+            )}
+          </div>
         </div>
-        <div className="cc-info-row">
-          <span className="cc-info-k">Created</span>
-          <span className="cc-info-v">{fmtDate(org.created_at)}</span>
+
+        {/* Right: severity donut + agents */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+          {/* Severity distribution */}
+          <div className="cc-section" style={{ padding: 0 }}>
+            <div className="ov-activity-head">
+              <span className="ov-activity-title">Severity breakdown</span>
+            </div>
+            {!summary ? (
+              <div className="ov-donut-wrap">
+                <span className="cc-skel" style={{ width: 100, height: 100, borderRadius: '50%', display: 'block' }} />
+                <div className="ov-donut-legend">
+                  {[0,1,2,3].map(i => (
+                    <span key={i} className="cc-skel" style={{ height: 12, display: 'block' }} />
+                  ))}
+                </div>
+              </div>
+            ) : total === 0 ? (
+              <div className="ov-no-findings">✓ No findings recorded yet</div>
+            ) : (
+              <div className="ov-donut-wrap">
+                <DonutChart counts={sc} total={total} />
+                <div className="ov-donut-legend">
+                  {SEV_ORDER.filter(s => sc[s] > 0).map(s => (
+                    <div key={s} className="ov-legend-row">
+                      <div className="ov-legend-dot" style={{ background: SEV_COLORS[s] }} />
+                      <div className="ov-legend-label">{s.charAt(0).toUpperCase() + s.slice(1)}</div>
+                      <div className="ov-legend-val">{sc[s]}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Agents — placeholder until the feature ships */}
+          <div className="cc-section" style={{ padding: 0 }}>
+            <div className="ov-activity-head">
+              <span className="ov-activity-title">Agents</span>
+              <span style={{ font: '400 11px/1 var(--font-body)', color: '#8899AA' }}>Coming soon</span>
+            </div>
+            <div className="ov-agent-list">
+              {AGENT_PLACEHOLDER.map(a => (
+                <div key={a.name} className="ov-agent-row">
+                  <div className={`ov-agent-dot ov-agent-dot--${a.status}`} />
+                  <div className="ov-agent-name">{a.name}</div>
+                  <div className={`ov-agent-status ov-agent-status--${a.status}`}>
+                    {a.status}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
         </div>
       </div>
     </>

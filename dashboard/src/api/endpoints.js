@@ -79,6 +79,8 @@ export const scanApi = {
   },
   get:      (slug, jobId)  => api.get(`/scans/organizations/${slug}/scans/${jobId}`),
   stats:    (slug)         => api.get(`/scans/organizations/${slug}/scans/stats`),
+  // Single-call org overview: severity totals + status counts + 8 recent scans.
+  summary:  (slug)         => api.get(`/scans/organizations/${slug}/scans/summary`),
   findings: (slug, jobId, { offset = 0, limit = 100, severity, tool } = {}) => {
     const qs = new URLSearchParams({ offset, limit })
     if (severity) qs.set('severity', severity)

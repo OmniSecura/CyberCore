@@ -311,6 +311,64 @@ class ScanService:
         counts["total"] = sum(counts.values())
         return counts
 
+    def get_org_summary(self, organization_id: str) -> dict:
+        """
+        One-query aggregate for the org dashboard overview tab.
+
+        Returns severity counts across all findings for the org, status counts
+        for all jobs, and the 8 most recent jobs — all in a single pass so the
+        overview tab pays two DB round-trips (this + the privileges check that
+        runs before routing) rather than N separate list/stats/findings calls.
+        """
+        # Severity distribution across every finding recorded for this org
+        sev_rows = (
+            self.db.query(ScanFinding.severity, func.count(ScanFinding.id))
+            .join(ScanJob, ScanFinding.scan_job_id == ScanJob.id)
+            .filter(
+                ScanJob.organization_id == organization_id,
+                ScanJob.deleted_at.is_(None),
+            )
+            .group_by(ScanFinding.severity)
+            .all()
+        )
+        severity_counts: dict[str, int] = {s: 0 for s in ("critical", "high", "medium", "low", "info")}
+        for sev, n in sev_rows:
+            severity_counts[sev] = n
+
+        # Per-status job counts (mirrors get_status_counts)
+        status_rows = (
+            self.db.query(ScanJob.status, func.count(ScanJob.id))
+            .filter(
+                ScanJob.organization_id == organization_id,
+                ScanJob.deleted_at.is_(None),
+            )
+            .group_by(ScanJob.status)
+            .all()
+        )
+        status_counts: dict[str, int] = {s: 0 for s in ("queued", "running", "completed", "failed", "cancelled")}
+        for st, n in status_rows:
+            status_counts[st] = n
+        status_counts["total"] = sum(status_counts.values())
+
+        # 8 most recent scans for the activity feed
+        recent = (
+            self.db.query(ScanJob)
+            .filter(
+                ScanJob.organization_id == organization_id,
+                ScanJob.deleted_at.is_(None),
+            )
+            .order_by(ScanJob.created_at.desc())
+            .limit(8)
+            .all()
+        )
+
+        return {
+            "severity_counts": severity_counts,
+            "total_findings": sum(severity_counts.values()),
+            "status_counts": status_counts,
+            "recent_scans": recent,
+        }
+
     def get_job(self, organization_id: str, job_id: str) -> ScanJob:
         job = (
             self.db.query(ScanJob)

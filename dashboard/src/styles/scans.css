@@ -422,6 +422,80 @@
 .sc-dropzone-clear:hover { background: #FED7D7; color: #C53030; }
 .sc-dropzone-clear svg { width: 10px; height: 10px; }
 
+/* ─── Severity stat cards (top of findings tab) ──────────────────────────── */
+.sc-sev-cards {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+  margin-bottom: 18px;
+}
+@media (max-width: 700px) { .sc-sev-cards { grid-template-columns: repeat(3, 1fr); } }
+
+.sc-sev-card {
+  border-radius: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: box-shadow 120ms, transform 120ms;
+  border: 2px solid transparent;
+  user-select: none;
+}
+.sc-sev-card:hover { transform: translateY(-1px); }
+.sc-sev-card--on   { border-color: currentColor; }
+
+.sc-sev-card--critical { background: #742A2A22; color: #742A2A; }
+.sc-sev-card--high     { background: #FFF5F5;   color: #C53030; }
+.sc-sev-card--medium   { background: #FFFBEB;   color: #92400E; }
+.sc-sev-card--low      { background: #FEFCE8;   color: #713F12; }
+.sc-sev-card--info     { background: #EFF6FF;   color: #1D4ED8; }
+
+.sc-sev-card-label {
+  font: 600 10px/1 var(--font-body);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  opacity: .7;
+}
+.sc-sev-card-val {
+  font: 700 28px/1.1 var(--font-display);
+  letter-spacing: -.5px;
+  margin-top: 4px;
+}
+
+/* ─── Tool badge inside finding row ──────────────────────────────────────── */
+.sc-tool-pill {
+  display: inline-flex; align-items: center;
+  height: 18px; padding: 0 7px;
+  border-radius: 4px;
+  font: 600 9.5px/1 var(--font-mono);
+  letter-spacing: .03em;
+  background: #ECF2F8; color: #4A6080;
+  white-space: nowrap; flex-shrink: 0;
+}
+
+/* ─── Confidence bar in finding row ──────────────────────────────────────── */
+.sc-conf-wrap {
+  display: flex; align-items: center; gap: 6px;
+  flex-shrink: 0; width: 80px;
+}
+.sc-conf-bar {
+  flex: 1; height: 4px; border-radius: 999px;
+  background: #E6EEF6; overflow: hidden;
+}
+.sc-conf-fill {
+  height: 100%; border-radius: 999px;
+  transition: width 300ms;
+}
+.sc-conf-pct {
+  font: 600 10.5px/1 var(--font-body);
+  color: #8899AA;
+  flex-shrink: 0; width: 28px; text-align: right;
+}
+
+/* ─── Rescan button hint ─────────────────────────────────────────────────── */
+.sc-rescan-hint {
+  font: 400 11px/1.4 var(--font-body); color: #8899AA;
+  padding: 4px 0;
+}
+
 /* ─── Big spinner (in-progress state) ────────────────────────────────────── */
 .sc-spin-wrap {
   width: 52px; height: 52px;

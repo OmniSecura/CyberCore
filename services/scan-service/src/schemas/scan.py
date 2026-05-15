@@ -409,3 +409,36 @@ class FindingsListOut(BaseModel):
     # True when len(items) < total — UI uses this to show a "results truncated"
     # banner instead of silently misrepresenting per-tool counts.
     truncated: bool = False
+
+
+# ── Org-level summary (dashboard overview) ─────────────────────────────────────
+
+class RecentScanSummary(BaseModel):
+    """Lightweight scan row used in the org dashboard activity feed."""
+    id: str
+    name: str
+    scan_type: str
+    status: str
+    target_type: Optional[str] = None
+    target_url: Optional[str] = None
+    findings_count: int = 0
+    created_at: datetime
+    completed_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class OrgSummaryOut(BaseModel):
+    """
+    Single-round-trip payload for the org dashboard overview tab.
+
+    severity_counts  — aggregate across ALL scan findings for this org
+                       (not limited to a single job).
+    total_findings   — sum of severity_counts values.
+    status_counts    — live scan status breakdown (same as /scans/stats).
+    recent_scans     — the 8 most-recently created jobs, newest first.
+    """
+    severity_counts: dict[str, int]
+    total_findings: int
+    status_counts: dict[str, int]
+    recent_scans: list[RecentScanSummary]
