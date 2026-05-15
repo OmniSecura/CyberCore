@@ -235,17 +235,62 @@ def _clear_bearer_auth(client: httpx.Client) -> None:
         log.debug("Bearer rule cleanup failed: %s", exc)
 
 
+def _configure_cookie_auth(client: httpx.Client, cookie_value: str) -> None:
+    """
+    Inject a raw `Cookie: <value>` header into every outgoing ZAP request.
+
+    Same mechanism as bearer auth — uses the Replacer add-on. Used when the
+    target app stores its session in httpOnly cookies (so we can't read them
+    with JS) and the user pastes the value from their browser DevTools.
+
+    The user is expected to paste the full cookie header value, e.g.
+    "access_token=eyJ...; refresh_token=eyJ...". We don't split on `;` or
+    try to "fix" the format — ZAP's Replacer treats `replacement` verbatim.
+    """
+    desc = "cybercore-cookie"
+    try:
+        _get(client, "/JSON/replacer/action/removeRule/", description=desc)
+    except Exception:
+        pass
+    _get(
+        client,
+        "/JSON/replacer/action/addRule/",
+        description=desc,
+        enabled="true",
+        matchType="REQ_HEADER",
+        matchRegex="false",
+        matchString="Cookie",
+        replacement=cookie_value,
+        initiators="",
+    )
+    log.info("Cookie auth configured (Cookie header injection via Replacer)")
+
+
+def _clear_cookie_auth(client: httpx.Client) -> None:
+    try:
+        _get(client, "/JSON/replacer/action/removeRule/", description="cybercore-cookie")
+    except Exception as exc:
+        log.debug("Cookie rule cleanup failed: %s", exc)
+
+
 def _configure_form_auth(
     client: httpx.Client,
     context_id: str,
     auth: dict,
+    *,
+    json_body: bool = False,
 ) -> None:
     """
-    Set up ZAP form-based authentication for the given context.
+    Set up ZAP authentication for the given context. Handles both classic
+    form-encoded login (`json_body=False`) and JSON-body login
+    (`json_body=True`) used by FastAPI / Express-style backends.
 
     Sequence:
-      1. Set context's authentication method to "formBasedAuthentication"
-         with the login URL and the request body template.
+      1. Set context's authentication method:
+           • formBasedAuthentication  — body is application/x-www-form-urlencoded
+           • jsonBasedAuthentication  — body is application/json
+         Both methods take a request template with `{%username%}` and
+         `{%password%}` placeholders that ZAP substitutes per-user.
       2. (optional) Set a logged-in indicator so ZAP knows when the session
          has expired and re-runs the login.
       3. Create a user inside the context with the supplied credentials.
@@ -253,17 +298,34 @@ def _configure_form_auth(
          spider/active scan.
 
     Real-world auth is messier than this — CSRF tokens, JWT refresh, OAuth
-    redirects — but for MVP this covers the common "login form posts
-    username+password" case.
+    redirects — but for MVP this covers the common "login POST with
+    username+password" case in both wire formats.
     """
     from urllib.parse import quote
+
     login_url = auth["login_url"]
-    user_field = auth.get("username_field") or "username"
-    pass_field = auth.get("password_field") or "password"
-    # ZAP's form-auth wants the POST body template with `{%username%}` and
-    # `{%password%}` placeholders. ZAP substitutes them at runtime from the
-    # User record.
-    body_template = f"{user_field}={{%username%}}&{pass_field}={{%password%}}"
+
+    if json_body:
+        # User-supplied JSON template — schema validation already ensures it
+        # contains both placeholders and parses as JSON, so we can hand it
+        # to ZAP verbatim. This is what makes the JSON-login mode flexible:
+        # the template can include extra fields, nested envelopes, custom
+        # key names — anything the target login endpoint expects.
+        body_template = auth.get("body_template")
+        if not body_template:
+            # Defensive — schema should reject this, but if it slips through
+            # we fall back to the FastAPI-style default so the scan still
+            # runs rather than crashing the worker.
+            user_field = auth.get("username_field") or "email"
+            pass_field = auth.get("password_field") or "password"
+            import json as _json
+            body_template = _json.dumps({user_field: "{%username%}", pass_field: "{%password%}"})
+        auth_method = "jsonBasedAuthentication"
+    else:
+        user_field = auth.get("username_field") or "username"
+        pass_field = auth.get("password_field") or "password"
+        body_template = f"{user_field}={{%username%}}&{pass_field}={{%password%}}"
+        auth_method = "formBasedAuthentication"
 
     # Step 1 — authentication method.
     auth_config = (
@@ -274,7 +336,7 @@ def _configure_form_auth(
         client,
         "/JSON/authentication/action/setAuthenticationMethod/",
         contextId=context_id,
-        authMethodName="formBasedAuthentication",
+        authMethodName=auth_method,
         authMethodConfigParams=auth_config,
     )
 
@@ -595,13 +657,22 @@ def run(
         # are walking the app already logged in. Without this, ZAP would
         # crawl only the public surface and miss authenticated routes.
         bearer_applied = False
+        cookie_applied = False
+        form_auth_applied = False     # covers both form and json_form (forced-user mode)
         if auth:
             auth_type = (auth.get("type") or "").lower()
             if auth_type == "bearer" and auth.get("token"):
                 _configure_bearer_auth(client, auth["token"])
                 bearer_applied = True
+            elif auth_type == "cookie" and auth.get("cookie"):
+                _configure_cookie_auth(client, auth["cookie"])
+                cookie_applied = True
             elif auth_type == "form":
-                _configure_form_auth(client, context_id, auth)
+                _configure_form_auth(client, context_id, auth, json_body=False)
+                form_auth_applied = True
+            elif auth_type == "json_form":
+                _configure_form_auth(client, context_id, auth, json_body=True)
+                form_auth_applied = True
             else:
                 log.warning("Unknown auth type %r — skipping auth setup", auth_type)
 
@@ -623,11 +694,13 @@ def run(
 
             return _collect_alerts(client, target_url)
         finally:
-            # Auth cleanup runs even if the scan failed mid-way. Otherwise a
-            # bearer token from a crashed job would silently apply to the
+            # Auth cleanup runs even if the scan failed mid-way. Otherwise
+            # credentials from a crashed job would silently apply to the
             # next scan that uses the same ZAP daemon.
             if bearer_applied:
                 _clear_bearer_auth(client)
-            if auth and (auth.get("type") or "").lower() == "form":
+            if cookie_applied:
+                _clear_cookie_auth(client)
+            if form_auth_applied:
                 _clear_forced_user(client)
             _cleanup_context(client, context_name)

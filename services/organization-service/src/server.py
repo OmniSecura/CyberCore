@@ -8,6 +8,7 @@ from .global_settings import APP_NAME, APP_DESCRIPTION, APP_VERSION
 from .routers.api_router import api_router
 from .database.models.Base import Base
 from .database.db_connection import _connector
+from .security.headers_middleware import SecurityHeadersMiddleware
 
 def create_app() -> FastAPI:
     app = FastAPI(
@@ -27,6 +28,11 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
         allow_credentials=True,
     )
+
+    # Defense-in-depth response headers — closes the X-Content-Type-Options,
+    # X-Frame-Options, Referrer-Policy, Permissions-Policy findings that ZAP
+    # raises on every endpoint by default.
+    app.add_middleware(SecurityHeadersMiddleware)
 
     @app.get("/", include_in_schema=False)
     @app.get("/docs", include_in_schema=False)

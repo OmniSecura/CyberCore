@@ -106,33 +106,57 @@ _MAX_EXCLUDE_LEN = 256
 # ScanJob is just a label for the UI; the actual token/password never round-
 # trips through any API response.
 #
-# Two methods supported on MVP:
-#   • bearer — adds `Authorization: Bearer <token>` to every ZAP request via
-#              the Replacer add-on. Works for JWT/session-token APIs.
-#   • form   — ZAP performs a form-based login itself (POST username+password
-#              to a login URL), then carries the resulting session through
-#              subsequent requests via cookies.
-AuthType = Literal["bearer", "form"]
+# Four methods supported:
+#   • bearer    — adds `Authorization: Bearer <token>` to every ZAP request via
+#                 the Replacer add-on. Works for JWT/session-token APIs that
+#                 accept the header.
+#   • cookie    — adds `Cookie: <raw value>` to every ZAP request via Replacer.
+#                 Use when the app stores session in httpOnly cookies that the
+#                 user pulls from their browser DevTools.
+#   • form      — ZAP performs a form-encoded login itself (POST
+#                 `username=…&password=…`), then carries the resulting session
+#                 through subsequent requests via cookies. Classic web forms.
+#   • json_form — like `form`, but ZAP POSTs a JSON body to the login URL.
+#                 Used by FastAPI/Express-style backends whose login endpoint
+#                 expects `{"email": "...", "password": "..."}` rather than
+#                 form-encoded data.
+AuthType = Literal["bearer", "cookie", "form", "json_form"]
 
 
 class AuthConfig(BaseModel):
     type: AuthType
     # bearer
     token: Optional[str] = None
-    # form
+    # cookie — raw value of the Cookie header, e.g. "access_token=ey...; ..."
+    cookie: Optional[str] = None
+    # form / json_form
     login_url: Optional[str] = None
     username: Optional[str] = None
     password: Optional[str] = None
-    # Field names that appear in the login form. Defaults match the most
-    # common naming; users can override for apps that use "email"/"pwd"/etc.
+    # Field names for form-encoded login (used only when type=="form").
+    # `json_form` ignores these and uses body_template instead.
     username_field: str = "username"
     password_field: str = "password"
+    # Raw JSON template the user wants posted as the login request body.
+    # Required for type=="json_form". Must contain the literal placeholders
+    # {%username%} and {%password%} — ZAP substitutes them with the values
+    # of `username` / `password` at scan time.
+    #
+    # Why a free-form template instead of two key fields? Many real login
+    # endpoints need more than just user+pass — client_id, device fingerprint,
+    # `remember_me`, nested envelopes etc. A textarea covers all of them
+    # without growing the schema every time a new field is needed.
+    #
+    # Example for FastAPI:
+    #   {"email":"{%username%}","password":"{%password%}"}
+    body_template: Optional[str] = None
     # Optional regex ZAP uses to detect a "logged in" response — if present
     # in the body, the session is considered active; if absent, ZAP re-auths.
     logged_in_regex: Optional[str] = None
 
-    @field_validator("token", "login_url", "username", "password",
-                     "username_field", "password_field", "logged_in_regex")
+    @field_validator("token", "cookie", "login_url", "username", "password",
+                     "username_field", "password_field", "body_template",
+                     "logged_in_regex")
     @classmethod
     def strip_strings(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
@@ -149,7 +173,16 @@ class AuthConfig(BaseModel):
                 raise ValueError("bearer auth requires `token`")
             if len(self.token) > 8192:
                 raise ValueError("bearer token is implausibly long (>8 KiB)")
-        elif self.type == "form":
+        elif self.type == "cookie":
+            if not self.cookie:
+                raise ValueError("cookie auth requires `cookie`")
+            if len(self.cookie) > 8192:
+                raise ValueError("cookie value is implausibly long (>8 KiB)")
+            # Reject obvious garbage — Cookie header values cannot contain
+            # newlines (header smuggling) or control chars.
+            if any(ord(ch) < 0x20 for ch in self.cookie):
+                raise ValueError("cookie must not contain control characters or newlines")
+        elif self.type in ("form", "json_form"):
             missing = [
                 f for f, v in [
                     ("login_url", self.login_url),
@@ -158,8 +191,10 @@ class AuthConfig(BaseModel):
                 ] if not v
             ]
             if missing:
-                raise ValueError(f"form auth requires: {', '.join(missing)}")
+                raise ValueError(f"{self.type} auth requires: {', '.join(missing)}")
             _validate_web_url(self.login_url, field_name="login_url")
+            if self.type == "json_form":
+                _validate_json_body_template(self.body_template)
         return self
 
 
@@ -235,6 +270,35 @@ class SubmitWebScanRequest(BaseModel):
                 "openapi_url can only be set when discovery_mode is 'openapi'"
             )
         return self
+
+
+def _validate_json_body_template(v: Optional[str]) -> None:
+    """
+    Validate a json_form body template:
+      • must be present
+      • must contain both {%username%} and {%password%} placeholders
+      • must parse as JSON once placeholders are replaced with safe stand-ins
+
+    The placeholder check matters because ZAP only substitutes those two
+    exact strings — typos like `{% username %}` or `{{username}}` will be
+    sent verbatim to the login endpoint and silently fail auth.
+    """
+    import json as _json
+    if not v or not v.strip():
+        raise ValueError("json_form auth requires `body_template`")
+    if len(v) > 16384:
+        raise ValueError("body_template is implausibly long (>16 KiB)")
+    if "{%username%}" not in v:
+        raise ValueError("body_template must contain the literal `{%username%}` placeholder")
+    if "{%password%}" not in v:
+        raise ValueError("body_template must contain the literal `{%password%}` placeholder")
+    # Substitute placeholders with dummy strings and try to parse — catches
+    # quoting/comma mistakes before the worker hits ZAP with a broken body.
+    probe = v.replace("{%username%}", "u").replace("{%password%}", "p")
+    try:
+        _json.loads(probe)
+    except _json.JSONDecodeError as exc:
+        raise ValueError(f"body_template is not valid JSON: {exc.msg} at line {exc.lineno} col {exc.colno}")
 
 
 def _validate_web_url(v: str, *, field_name: str) -> str:

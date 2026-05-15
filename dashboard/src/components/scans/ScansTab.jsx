@@ -145,15 +145,22 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
   // Multi-line textarea; we split on newlines when submitting so the user
   // can paste a list naturally.
   const [excludePaths, setExcludePaths]   = useState('')
-  // Auth: 'none' | 'bearer' | 'form'. Credentials are never stored — they're
-  // submitted once and used only by the worker.
+  // Auth: 'none' | 'bearer' | 'cookie' | 'form' | 'json_form'. Credentials
+  // are never stored — they're submitted once and used only by the worker.
   const [authMode, setAuthMode]   = useState('none')
   const [authToken, setAuthToken] = useState('')
+  const [authCookie, setAuthCookie] = useState('')
   const [authLoginUrl, setAuthLoginUrl]   = useState('')
   const [authUsername, setAuthUsername]   = useState('')
   const [authPassword, setAuthPassword]   = useState('')
   const [authUserField, setAuthUserField] = useState('username')
   const [authPassField, setAuthPassField] = useState('password')
+  // Free-form JSON body for json_form mode — covers cases where the login
+  // endpoint needs more than just username+password (client_id, nested
+  // envelopes, custom keys).
+  const [authJsonBody, setAuthJsonBody] = useState(
+    '{\n  "email": "{%username%}",\n  "password": "{%password%}"\n}'
+  )
   const [name, setName]       = useState('')
   const [url, setUrl]         = useState('')   // shared by SAST git-mode and DAST
   const [file, setFile]       = useState(null)
@@ -166,10 +173,20 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
 
   // Block submit if auth fields are inconsistent — backend would 422 us
   // anyway but it's nicer to enable the button only when the form is valid.
+  // For json_form we additionally require the body template to contain both
+  // placeholders. Server validates JSON shape; the placeholder check here
+  // matches against the same rule so the Submit button reflects reality.
+  const jsonBodyOk = (
+    authJsonBody.includes('{%username%}') && authJsonBody.includes('{%password%}')
+  )
   const dastAuthOk = (
     authMode === 'none'
       || (authMode === 'bearer' && authToken.trim())
-      || (authMode === 'form' && authLoginUrl.trim() && authUsername.trim() && authPassword)
+      || (authMode === 'cookie' && authCookie.trim())
+      || (authMode === 'form'
+          && authLoginUrl.trim() && authUsername.trim() && authPassword)
+      || (authMode === 'json_form'
+          && authLoginUrl.trim() && authUsername.trim() && authPassword && jsonBodyOk)
   )
 
   const canSubmit = !loading && !limitReached && name.trim() && (
@@ -205,6 +222,8 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
         }
         if (authMode === 'bearer') {
           payload.auth = { type: 'bearer', token: authToken.trim() }
+        } else if (authMode === 'cookie') {
+          payload.auth = { type: 'cookie', cookie: authCookie.trim() }
         } else if (authMode === 'form') {
           payload.auth = {
             type: 'form',
@@ -213,6 +232,16 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
             password: authPassword,
             username_field: authUserField.trim() || 'username',
             password_field: authPassField.trim() || 'password',
+          }
+        } else if (authMode === 'json_form') {
+          payload.auth = {
+            type: 'json_form',
+            login_url: authLoginUrl.trim(),
+            username: authUsername.trim(),
+            password: authPassword,
+            // The full request body as-is — backend validates that it has
+            // both placeholders and parses as JSON.
+            body_template: authJsonBody,
           }
         }
         job = await scanApi.submitWeb(slug, payload)
@@ -239,8 +268,10 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
     setExcludePaths('')
     setDiscoveryMode('spider')
     setAuthMode('none')
-    setAuthToken(''); setAuthLoginUrl(''); setAuthUsername(''); setAuthPassword('')
+    setAuthToken(''); setAuthCookie('')
+    setAuthLoginUrl(''); setAuthUsername(''); setAuthPassword('')
     setAuthUserField('username'); setAuthPassField('password')
+    setAuthJsonBody('{\n  "email": "{%username%}",\n  "password": "{%password%}"\n}')
     if (fileRef.current) fileRef.current.value = ''
   }
 
@@ -494,7 +525,7 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
                 {/* Authentication — let ZAP scan logged-in endpoints */}
                 <div className="cc-mfield">
                   <label>Authentication <span style={{ color: '#8899AA', fontWeight: 400 }}>(optional)</span></label>
-                  <div className="sc-mode-tabs" style={{ marginTop: 4 }}>
+                  <div className="sc-mode-tabs" style={{ marginTop: 4, flexWrap: 'wrap' }}>
                     <button
                       type="button"
                       className={`sc-mode-tab${authMode === 'none' ? ' sc-mode-tab--on' : ''}`}
@@ -513,11 +544,27 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
                     </button>
                     <button
                       type="button"
+                      className={`sc-mode-tab${authMode === 'cookie' ? ' sc-mode-tab--on' : ''}`}
+                      onClick={() => setAuthMode('cookie')}
+                      disabled={limitReached}
+                    >
+                      Cookie
+                    </button>
+                    <button
+                      type="button"
                       className={`sc-mode-tab${authMode === 'form' ? ' sc-mode-tab--on' : ''}`}
                       onClick={() => setAuthMode('form')}
                       disabled={limitReached}
                     >
                       Form login
+                    </button>
+                    <button
+                      type="button"
+                      className={`sc-mode-tab${authMode === 'json_form' ? ' sc-mode-tab--on' : ''}`}
+                      onClick={() => setAuthMode('json_form')}
+                      disabled={limitReached}
+                    >
+                      JSON login
                     </button>
                   </div>
                   <div style={{
@@ -527,7 +574,9 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
                   }}>
                     {authMode === 'none' && 'Scan runs unauthenticated. Use this if the target is fully public.'}
                     {authMode === 'bearer' && 'Adds `Authorization: Bearer <token>` to every ZAP request. Works for JWT/API key auth.'}
-                    {authMode === 'form' && 'ZAP performs a login POST itself and reuses the resulting session for all scanning.'}
+                    {authMode === 'cookie' && 'Adds your raw Cookie header to every request. Useful for httpOnly session cookies — log into the app in your browser, copy the Cookie header from DevTools.'}
+                    {authMode === 'form' && 'ZAP performs a form-encoded login POST (`username=…&password=…`) and reuses the session for all scanning. Classic web forms.'}
+                    {authMode === 'json_form' && 'ZAP POSTs a JSON body to the login URL — for FastAPI/Express APIs whose login endpoint expects `{ "email": "…", "password": "…" }`.'}
                     {authMode !== 'none' && (
                       <div style={{ marginTop: 6, color: '#C53030' }}>
                         Credentials are never stored — they live only in the worker queue and are discarded after the scan.
@@ -550,20 +599,43 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
                   </div>
                 )}
 
-                {authMode === 'form' && (
+                {authMode === 'cookie' && (
+                  <div className="cc-mfield">
+                    <label>Cookie header value</label>
+                    <input
+                      type="password"
+                      value={authCookie}
+                      onChange={e => setAuthCookie(e.target.value)}
+                      placeholder="access_token=ey…; refresh_token=ey…"
+                      autoComplete="new-password"
+                      disabled={limitReached}
+                    />
+                    <div style={{
+                      font: '400 12px/1.4 var(--font-body)',
+                      color: '#8899AA',
+                      marginTop: 6,
+                    }}>
+                      In your browser DevTools → Application → Cookies, copy the value of every cookie you need (usually <code>access_token</code> and <code>refresh_token</code>) joined by <code>; </code>.
+                    </div>
+                  </div>
+                )}
+
+                {(authMode === 'form' || authMode === 'json_form') && (
                   <>
                     <div className="cc-mfield">
                       <label>Login URL</label>
                       <input
                         value={authLoginUrl}
                         onChange={e => setAuthLoginUrl(e.target.value)}
-                        placeholder="https://app.example.com/login"
+                        placeholder={authMode === 'json_form'
+                          ? 'http://auth:8000/api/v1/users/login'
+                          : 'https://app.example.com/login'}
                         disabled={limitReached}
                       />
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                       <div className="cc-mfield">
-                        <label>Username</label>
+                        <label>Username / email</label>
                         <input
                           value={authUsername}
                           onChange={e => setAuthUsername(e.target.value)}
@@ -582,26 +654,67 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
                         />
                       </div>
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                      <div className="cc-mfield">
-                        <label>Username field name</label>
-                        <input
-                          value={authUserField}
-                          onChange={e => setAuthUserField(e.target.value)}
-                          placeholder="username"
-                          disabled={limitReached}
-                        />
+
+                    {/* Form-encoded login: simple two-field-name override */}
+                    {authMode === 'form' && (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                        <div className="cc-mfield">
+                          <label>Username field name</label>
+                          <input
+                            value={authUserField}
+                            onChange={e => setAuthUserField(e.target.value)}
+                            placeholder="username"
+                            disabled={limitReached}
+                          />
+                        </div>
+                        <div className="cc-mfield">
+                          <label>Password field name</label>
+                          <input
+                            value={authPassField}
+                            onChange={e => setAuthPassField(e.target.value)}
+                            placeholder="password"
+                            disabled={limitReached}
+                          />
+                        </div>
                       </div>
+                    )}
+
+                    {/* JSON login: free-form body textarea — covers every login
+                        shape, including extra fields and nested envelopes. */}
+                    {authMode === 'json_form' && (
                       <div className="cc-mfield">
-                        <label>Password field name</label>
-                        <input
-                          value={authPassField}
-                          onChange={e => setAuthPassField(e.target.value)}
-                          placeholder="password"
+                        <label>Request body (JSON)</label>
+                        <textarea
+                          value={authJsonBody}
+                          onChange={e => setAuthJsonBody(e.target.value)}
+                          rows={6}
+                          spellCheck={false}
                           disabled={limitReached}
+                          style={{
+                            width: '100%',
+                            font: '400 13px/1.5 var(--font-mono)',
+                            padding: '8px 10px',
+                            border: '1px solid #D5DFEA',
+                            borderRadius: 6,
+                            resize: 'vertical',
+                            background: '#fff',
+                            color: '#0A1628',
+                          }}
                         />
+                        <div style={{
+                          font: '400 12px/1.5 var(--font-body)',
+                          color: '#8899AA',
+                          marginTop: 6,
+                        }}>
+                          Use the literal placeholders <code>{'{%username%}'}</code> and <code>{'{%password%}'}</code> — ZAP substitutes them with the values above. Add any other fields your login endpoint needs (e.g. <code>client_id</code>, <code>device_id</code>, <code>remember_me</code>).
+                          {!jsonBodyOk && (
+                            <div style={{ marginTop: 4, color: '#C53030' }}>
+                              Body must contain both placeholders.
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </>
                 )}
               </>

@@ -138,3 +138,45 @@ class AutoRefreshMiddleware(BaseHTTPMiddleware):
             return payload.get("sub")
         except jwt.PyJWTError:
             return None
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """
+    Set a small, safe set of response headers on every API response.
+
+    Each header here is defense-in-depth — none of them stops an attack on
+    its own, but every modern security baseline (OWASP ASVS, Mozilla
+    Observatory, ZAP baseline scan) expects them to be present.
+
+      • X-Content-Type-Options: nosniff
+            Tells browsers not to MIME-sniff a response away from its
+            declared Content-Type. Prevents `application/json` responses
+            from being interpreted as HTML/JS.
+
+      • X-Frame-Options: DENY
+            Blocks the page from being embedded in <iframe>. Defends
+            against clickjacking on UIs accessed from a browser. Safe to
+            set DENY on a JSON API — no one should iframe it.
+
+      • Referrer-Policy: strict-origin-when-cross-origin
+            Stops leaking the full request URL (which can contain tokens
+            in query strings) when the user navigates to an external site.
+
+      • Permissions-Policy: camera=(), microphone=(), geolocation=()
+            Disables browser APIs the API doesn't use. Belt-and-braces
+            defence in case any returned HTML/HTMX page is rendered.
+
+    `setdefault` is used so a route can still override a header — e.g.
+    an endpoint that intentionally returns SVG can keep its own X-Frame-
+    Options value.
+    """
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault(
+            "Permissions-Policy",
+            "camera=(), microphone=(), geolocation=()",
+        )
+        return response
