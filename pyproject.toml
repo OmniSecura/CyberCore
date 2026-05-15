@@ -1,0 +1,14 @@
+[tool.bumpver]
+current_version = "0.0.3"
+version_pattern = "MAJOR.MINOR.PATCH"
+commit = false
+tag = false
+push = false
+
+[tool.bumpver.file_patterns]
+"pyproject.toml" = [
+    'current_version = "{version}"',
+]
+"dashboard/src/config/constants.js" = [
+    "export const APP_VERSION = 'v{version}'",
+]
