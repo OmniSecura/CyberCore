@@ -6,10 +6,10 @@
 
 /* ─── Shell ──────────────────────────────────────────────────────────────── */
 .cc-shell {
-  min-height: 100vh;
+  height: 100vh;
   background: #F4F8FC;
   display: flex;
-  overflow-x: hidden;
+  overflow: hidden;
 }
 
 /* ─── Sidebar ────────────────────────────────────────────────────────────── */
@@ -117,6 +117,13 @@
   border-top: 1px solid rgba(255,255,255,.07);
   flex-shrink: 0;
 }
+.cc-sb-version {
+  font: 400 11px/1 var(--font-mono);
+  color: rgba(255,255,255,.22);
+  text-align: center;
+  padding-top: 8px;
+  letter-spacing: .03em;
+}
 .cc-user-row {
   display: flex;
   align-items: center;
@@ -158,12 +165,13 @@
 /* ─── Content area ───────────────────────────────────────────────────────── */
 .cc-content {
   flex: 1;
-  min-height: 100vh;
+  height: 100vh;
   min-width: 0;
   margin-left: 240px;
   transition: margin-left 300ms cubic-bezier(.22, 1, .36, 1);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 .cc-content--wide { margin-left: 0; }
 
@@ -199,7 +207,7 @@
 .cc-breadcrumb-cur { color: #0A1628; }
 
 /* Main padding */
-.cc-main { padding: 28px 32px 64px; }
+.cc-main { padding: 28px 32px 64px; flex: 1; overflow-y: auto; }
 
 /* ─── Page header ────────────────────────────────────────────────────────── */
 .cc-ph {

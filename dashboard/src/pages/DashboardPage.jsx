@@ -2,9 +2,16 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { CreateOrgModal } from '../components/organizations/CreateOrgModal'
 import { OrgDashboard }   from '../components/organizations/OrgDashboard'
 import { orgApi }         from '../api/endpoints'
+import { OverviewPage }   from './OverviewPage'
+import { APP_VERSION }    from '../config/constants'
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
+const IconHome = () => (
+  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M1 7l7-5 7 5M2 7v7h4v-4h4v4h4V7"/>
+  </svg>
+)
 const IconShield = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M12 2l7 4v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V6l7-4z"/>
@@ -114,10 +121,11 @@ function Sidebar({ open, onClose, user, onLogout, activeNav, onNavigate }) {
   const avi = initials(userName)
 
   const nav = [
-    { id: 'orgs',   label: 'Organizations', Icon: IconBuilding },
-    { id: 'agents', label: 'Agents',         Icon: IconCpu,  disabled: true },
-    { id: 'alerts', label: 'Alerts',         Icon: IconBell, disabled: true },
-    { id: 'logs',   label: 'Logs',           Icon: IconList, disabled: true },
+    { id: 'overview', label: 'Overview',       Icon: IconHome },
+    { id: 'orgs',     label: 'Organizations',  Icon: IconBuilding },
+    { id: 'agents',   label: 'Agents',         Icon: IconCpu,  disabled: true },
+    { id: 'alerts',   label: 'Alerts',         Icon: IconBell, disabled: true },
+    { id: 'logs',     label: 'Logs',           Icon: IconList, disabled: true },
   ]
 
   return (
@@ -157,6 +165,7 @@ function Sidebar({ open, onClose, user, onLogout, activeNav, onNavigate }) {
             <IconLogout />
           </button>
         </div>
+        <div className="cc-sb-version">{APP_VERSION}</div>
       </div>
     </aside>
   )
@@ -462,10 +471,14 @@ function OrgsView({ onOpenOrg }) {
 
 export function DashboardPage({ user, onLogout }) {
   const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [nav, setNav]                 = useState('orgs')
+  const [nav, setNav]                 = useState('overview')
   const [activeOrg, setActiveOrg]     = useState(null)
 
-  const breadcrumb = activeOrg ? activeOrg.organization_name : 'Organizations'
+  const breadcrumb = activeOrg
+    ? activeOrg.organization_name
+    : nav === 'overview'
+      ? 'Overview'
+      : 'Organizations'
 
   return (
     <div className="cc-shell">
@@ -492,17 +505,22 @@ export function DashboardPage({ user, onLogout }) {
           </span>
         </div>
 
-        <div className="cc-main">
-          {activeOrg
-            ? <OrgDashboard
-                org={activeOrg}
-                currentUserId={user?.id}
-                onBack={() => setActiveOrg(null)}
-                onOrgChanged={updated => setActiveOrg(updated)}
-              />
-            : <OrgsView onOpenOrg={setActiveOrg} />
-          }
-        </div>
+        {nav === 'overview' && !activeOrg
+          ? <OverviewPage onNavigate={v => { setNav(v); setActiveOrg(null) }} />
+          : (
+            <div className="cc-main">
+              {activeOrg
+                ? <OrgDashboard
+                    org={activeOrg}
+                    currentUserId={user?.id}
+                    onBack={() => setActiveOrg(null)}
+                    onOrgChanged={updated => setActiveOrg(updated)}
+                  />
+                : <OrgsView onOpenOrg={setActiveOrg} />
+              }
+            </div>
+          )
+        }
       </div>
     </div>
   )
