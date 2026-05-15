@@ -10,7 +10,7 @@ celery_app = Celery(
     "scan_worker",
     broker=CELERY_BROKER_URL,
     backend=CELERY_RESULT_BACKEND,
-    include=["src.tasks.sast"],
+    include=["src.tasks.sast", "src.tasks.dast"],
 )
 
 celery_app.conf.update(
@@ -25,6 +25,7 @@ celery_app.conf.update(
     worker_pool=_DEFAULT_POOL,
     task_routes={
         "scan_worker.tasks.sast.run_sast_scan": {"queue": "sast"},
+        "scan_worker.tasks.dast.run_dast_scan": {"queue": "dast"},
     },
     result_expires=86400,         # keep results in Redis for 24 h
 )

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..database.models.ScanJob import ScanJob
 from ..database.models.ScanFinding import ScanFinding
-from ..schemas.scan import SubmitGitScanRequest
+from ..schemas.scan import SubmitGitScanRequest, SubmitWebScanRequest
 
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
@@ -204,6 +204,67 @@ class ScanService:
         self.db.commit()
         return job
 
+    # ── Submit DAST ────────────────────────────────────────────────────────────
+
+    def submit_web_scan(
+        self,
+        organization_id: str,
+        user_id: str,
+        body: SubmitWebScanRequest,
+    ) -> ScanJob:
+        """
+        Queue a DAST scan against a live web target. The profile (`passive` or
+        `active`) is stored in `extra` and read by the worker — the row schema
+        is otherwise identical to a SAST job, so the existing list/detail/
+        cancel/delete endpoints keep working without changes.
+        """
+        self._enforce_quota(organization_id)
+
+        # Credentials never go into `extra` (which is returned by the read
+        # API). We only record the type so the UI can show "Authenticated as
+        # bearer/form" on the detail view. The actual token/password is
+        # passed through Celery args and discarded after the worker reads it.
+        auth_type_label = body.auth.type if body.auth else None
+        auth_payload = body.auth.model_dump(exclude_none=True) if body.auth else None
+
+        job = ScanJob(
+            id=str(uuid.uuid4()),
+            organization_id=organization_id,
+            created_by=user_id,
+            name=body.name,
+            scan_type="dast",
+            status="queued",
+            target_type="web_url",
+            target_url=body.target_url,
+            extra={
+                "profile": body.profile,
+                "discovery_mode": body.discovery_mode,
+                "openapi_url": body.openapi_url,
+                # Stored as a list; the runner translates to ZAP regex patterns
+                # at scan time. Empty list means "no exclusions".
+                "exclude_paths": list(body.exclude_paths or []),
+                # Display-only label. NEVER contains credentials.
+                "auth_type": auth_type_label,
+            },
+        )
+        self.db.add(job)
+        self.db.commit()
+        self.db.refresh(job)
+
+        # `kwargs` here goes into the broker message in Redis. Once the
+        # worker acks the task and the message is removed from the queue,
+        # the credentials are gone — they're never written to the result
+        # backend (we don't return them from the task).
+        task = _celery.send_task(
+            "scan_worker.tasks.dast.run_dast_scan",
+            args=[job.id],
+            kwargs={"auth": auth_payload},
+            queue="dast",
+        )
+        job.celery_task_id = task.id
+        self.db.commit()
+        return job
+
     # ── Read ───────────────────────────────────────────────────────────────────
 
     def list_jobs(
@@ -249,6 +310,64 @@ class ScanService:
             counts[st] = n
         counts["total"] = sum(counts.values())
         return counts
+
+    def get_org_summary(self, organization_id: str) -> dict:
+        """
+        One-query aggregate for the org dashboard overview tab.
+
+        Returns severity counts across all findings for the org, status counts
+        for all jobs, and the 8 most recent jobs — all in a single pass so the
+        overview tab pays two DB round-trips (this + the privileges check that
+        runs before routing) rather than N separate list/stats/findings calls.
+        """
+        # Severity distribution across every finding recorded for this org
+        sev_rows = (
+            self.db.query(ScanFinding.severity, func.count(ScanFinding.id))
+            .join(ScanJob, ScanFinding.scan_job_id == ScanJob.id)
+            .filter(
+                ScanJob.organization_id == organization_id,
+                ScanJob.deleted_at.is_(None),
+            )
+            .group_by(ScanFinding.severity)
+            .all()
+        )
+        severity_counts: dict[str, int] = {s: 0 for s in ("critical", "high", "medium", "low", "info")}
+        for sev, n in sev_rows:
+            severity_counts[sev] = n
+
+        # Per-status job counts (mirrors get_status_counts)
+        status_rows = (
+            self.db.query(ScanJob.status, func.count(ScanJob.id))
+            .filter(
+                ScanJob.organization_id == organization_id,
+                ScanJob.deleted_at.is_(None),
+            )
+            .group_by(ScanJob.status)
+            .all()
+        )
+        status_counts: dict[str, int] = {s: 0 for s in ("queued", "running", "completed", "failed", "cancelled")}
+        for st, n in status_rows:
+            status_counts[st] = n
+        status_counts["total"] = sum(status_counts.values())
+
+        # 8 most recent scans for the activity feed
+        recent = (
+            self.db.query(ScanJob)
+            .filter(
+                ScanJob.organization_id == organization_id,
+                ScanJob.deleted_at.is_(None),
+            )
+            .order_by(ScanJob.created_at.desc())
+            .limit(8)
+            .all()
+        )
+
+        return {
+            "severity_counts": severity_counts,
+            "total_findings": sum(severity_counts.values()),
+            "status_counts": status_counts,
+            "recent_scans": recent,
+        }
 
     def get_job(self, organization_id: str, job_id: str) -> ScanJob:
         job = (
@@ -298,6 +417,191 @@ class ScanService:
             severity_counts[sev] = n
 
         return total, items, severity_counts
+
+    # ── Export ─────────────────────────────────────────────────────────────────
+
+    def export_findings(
+        self,
+        organization_id: str,
+        job_id: str,
+        fmt: str,
+    ) -> tuple[str, str, str]:
+        """
+        Build a downloadable report for a scan.
+
+        Returns `(content, content_type, filename)` so the router can stream
+        it back without re-deriving any of those values.
+
+        Supported formats:
+          • json — structured dump of the job + all findings, suitable for
+                   programmatic consumption / ingestion into other tools.
+          • html — single-file HTML with inline CSS, ready to print to PDF
+                   from the browser. We deliberately avoid a server-side
+                   PDF library to keep the worker slim.
+        """
+        from datetime import datetime, timezone
+        import html
+        import json as _json
+
+        fmt = (fmt or "json").lower()
+        if fmt not in ("json", "html"):
+            raise HTTPException(status_code=400, detail="format must be 'json' or 'html'")
+
+        job = self.get_job(organization_id, job_id)
+        findings = (
+            self.db.query(ScanFinding)
+            .filter(ScanFinding.scan_job_id == job.id)
+            .order_by(ScanFinding.severity, ScanFinding.tool, ScanFinding.file_path)
+            .all()
+        )
+
+        # Per-severity tally — derived here rather than re-queried so HTML
+        # and JSON exports stay consistent with each other.
+        sev_order = ("critical", "high", "medium", "low", "info")
+        counts = {s: 0 for s in sev_order}
+        for f in findings:
+            if f.severity in counts:
+                counts[f.severity] += 1
+
+        safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in (job.name or "scan"))[:64]
+        ts = datetime.now(tz=timezone.utc).strftime("%Y%m%d-%H%M%S")
+
+        if fmt == "json":
+            report = {
+                "scan": {
+                    "id": job.id,
+                    "name": job.name,
+                    "scan_type": job.scan_type,
+                    "status": job.status,
+                    "target_type": job.target_type,
+                    "target_url": job.target_url,
+                    "created_at": job.created_at.isoformat() if job.created_at else None,
+                    "started_at": job.started_at.isoformat() if job.started_at else None,
+                    "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+                    "findings_count": job.findings_count,
+                    "error_message": job.error_message,
+                    "extra": job.extra,
+                },
+                "summary": {
+                    "severity_counts": counts,
+                    "total": sum(counts.values()),
+                },
+                "findings": [
+                    {
+                        "id": f.id,
+                        "tool": f.tool,
+                        "rule_id": f.rule_id,
+                        "severity": f.severity,
+                        "confidence": f.confidence,
+                        "title": f.title,
+                        "message": f.message,
+                        "file_path": f.file_path,
+                        "line_start": f.line_start,
+                        "line_end": f.line_end,
+                        "code_snippet": f.code_snippet,
+                        "cwe": f.cwe,
+                        "owasp": f.owasp,
+                        "fingerprint": f.fingerprint,
+                        "created_at": f.created_at.isoformat() if f.created_at else None,
+                    }
+                    for f in findings
+                ],
+                "generated_at": datetime.now(tz=timezone.utc).isoformat(),
+            }
+            return (
+                _json.dumps(report, indent=2, ensure_ascii=False),
+                "application/json",
+                f"cybercore-{safe_name}-{ts}.json",
+            )
+
+        # ── HTML ──────────────────────────────────────────────────────────────
+        # Single-file report. No external assets — easy to email or print.
+        # Severity colours match the dashboard's CSS palette.
+        def esc(v: object) -> str:
+            return html.escape("" if v is None else str(v))
+
+        sev_color = {
+            "critical": "#7C1D1D",
+            "high":     "#C53030",
+            "medium":   "#D69E2E",
+            "low":      "#3182CE",
+            "info":     "#8899AA",
+        }
+
+        rows = []
+        for f in findings:
+            sev = (f.severity or "info").lower()
+            color = sev_color.get(sev, "#8899AA")
+            rows.append(f"""
+              <tr>
+                <td><span class="sev" style="background:{color}">{esc(sev)}</span></td>
+                <td><b>{esc(f.title)}</b><div class="rule">{esc(f.rule_id)}</div></td>
+                <td class="mono break">{esc(f.file_path)}{f' :{f.line_start}' if f.line_start else ''}</td>
+                <td class="msg">{esc(f.message)}</td>
+                <td>{esc(f.cwe or '—')}</td>
+              </tr>
+            """)
+
+        summary_chips = "".join(
+            f'<span class="chip" style="background:{sev_color[s]}">{counts[s]} {s}</span>'
+            for s in sev_order if counts[s] > 0
+        ) or '<span class="chip" style="background:#3FA86F">No findings</span>'
+
+        scan_meta = (
+            f"<tr><th>Target</th><td class='mono break'>{esc(job.target_url) or '—'}</td></tr>"
+            f"<tr><th>Type</th><td>{esc((job.scan_type or '').upper())}</td></tr>"
+            f"<tr><th>Status</th><td>{esc(job.status)}</td></tr>"
+            f"<tr><th>Started</th><td>{esc(job.started_at)}</td></tr>"
+            f"<tr><th>Finished</th><td>{esc(job.completed_at)}</td></tr>"
+        )
+        if job.extra:
+            for k in ("profile", "discovery_mode", "auth_type"):
+                if job.extra.get(k):
+                    scan_meta += f"<tr><th>{esc(k.replace('_', ' ').title())}</th><td>{esc(job.extra[k])}</td></tr>"
+
+        html_doc = f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<title>CyberCore Report — {esc(job.name)}</title>
+<style>
+  body {{ font: 14px/1.5 system-ui, -apple-system, sans-serif; color: #0A1628; max-width: 1100px; margin: 24px auto; padding: 0 24px; }}
+  h1 {{ font-size: 22px; margin: 0 0 4px; }}
+  .sub {{ color: #8899AA; margin-bottom: 24px; }}
+  .chip {{ display: inline-block; color: #fff; font-weight: 600; font-size: 12px; padding: 4px 10px; border-radius: 12px; margin-right: 6px; text-transform: capitalize; }}
+  table.meta {{ border-collapse: collapse; margin-bottom: 28px; }}
+  table.meta th {{ text-align: left; font-weight: 500; color: #4A6080; padding: 4px 12px 4px 0; width: 160px; vertical-align: top; }}
+  table.meta td {{ padding: 4px 0; }}
+  table.findings {{ width: 100%; border-collapse: collapse; }}
+  table.findings th, table.findings td {{ text-align: left; padding: 10px 12px; border-bottom: 1px solid #E6EEF6; vertical-align: top; }}
+  table.findings th {{ background: #F4F8FC; font-weight: 600; font-size: 12px; text-transform: uppercase; color: #4A6080; }}
+  .sev {{ display: inline-block; color: #fff; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 4px; text-transform: uppercase; }}
+  .rule {{ font: 11px/1.2 ui-monospace, monospace; color: #8899AA; margin-top: 2px; }}
+  .mono {{ font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }}
+  .break {{ word-break: break-all; }}
+  .msg {{ font-size: 12.5px; color: #364B66; white-space: pre-wrap; max-width: 520px; }}
+  .footer {{ margin-top: 32px; color: #8899AA; font-size: 12px; text-align: center; }}
+</style>
+</head><body>
+<h1>{esc(job.name)}</h1>
+<div class="sub">CyberCore security report · generated {esc(datetime.now(tz=timezone.utc).strftime('%Y-%m-%d %H:%M UTC'))}</div>
+
+<div style="margin-bottom: 24px;">{summary_chips}</div>
+
+<table class="meta">{scan_meta}</table>
+
+<h2 style="font-size: 16px; margin: 0 0 12px;">Findings ({len(findings)})</h2>
+<table class="findings">
+  <thead><tr><th>Severity</th><th>Title</th><th>Location</th><th>Details</th><th>CWE</th></tr></thead>
+  <tbody>{''.join(rows) or '<tr><td colspan="5" style="text-align:center; color:#3FA86F; padding:32px;">No findings — clean scan.</td></tr>'}</tbody>
+</table>
+
+<div class="footer">CyberCore · scan {esc(job.id)}</div>
+</body></html>"""
+
+        return (
+            html_doc,
+            "text/html; charset=utf-8",
+            f"cybercore-{safe_name}-{ts}.html",
+        )
 
     # ── Cancel ─────────────────────────────────────────────────────────────────
 

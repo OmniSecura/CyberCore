@@ -35,8 +35,18 @@
       <span class="badge gray">Port :8082</span>
     </div>
     <p class="lead">The scan-service is the API layer for all security scanning operations.
-    It accepts scan requests, enforces quotas, dispatches async tasks to the scan-worker,
-    and serves the results. The service itself runs no scanning tools.</p>
+    It accepts scan requests, enforces quotas, dispatches async tasks to the appropriate
+    worker, and serves the results. The service itself runs no scanning tools.</p>
+
+    <div class="callout info">
+      <div class="callout-title">SAST and DAST share this service</div>
+      <p>scan-service handles both <strong>SAST</strong> (source-code analysis, see
+      <a href="workers-sast.html">SAST Worker</a>) and <strong>DAST</strong> (live web app
+      testing with OWASP ZAP, see <a href="workers-dast.html">DAST Worker</a>). They use
+      the same database tables, same listing endpoints, and same quota — only the submit
+      endpoint and the worker process differ. The <code>scan_type</code> column on each
+      row tells you which engine produced it.</p>
+    </div>
 
     <div class="toc">
       <div class="toc-title">On this page</div>
@@ -63,17 +73,17 @@
           <tr><td><code>organization_id</code></td><td>CHAR(36)</td><td>Owner org; no FK (cross-service)</td></tr>
           <tr><td><code>created_by</code></td><td>CHAR(36)</td><td>User UUID who submitted; no FK (cross-service)</td></tr>
           <tr><td><code>name</code></td><td>VARCHAR(255)</td><td>Human-readable label for the scan</td></tr>
-          <tr><td><code>scan_type</code></td><td>VARCHAR(32)</td><td><code>sast</code> | <code>dast</code> (future)</td></tr>
+          <tr><td><code>scan_type</code></td><td>VARCHAR(32)</td><td><code>sast</code> or <code>dast</code></td></tr>
           <tr><td><code>status</code></td><td>VARCHAR(32)</td><td>See job lifecycle below</td></tr>
-          <tr><td><code>target_type</code></td><td>VARCHAR(32)</td><td><code>git_url</code> | <code>upload</code></td></tr>
-          <tr><td><code>target_url</code></td><td>TEXT</td><td>Public git repository URL (when target_type=git_url)</td></tr>
-          <tr><td><code>target_path</code></td><td>TEXT</td><td>Server-side path to the uploaded ZIP</td></tr>
+          <tr><td><code>target_type</code></td><td>VARCHAR(32)</td><td><code>git_url</code>, <code>upload</code> (SAST), or <code>web_url</code> (DAST)</td></tr>
+          <tr><td><code>target_url</code></td><td>TEXT</td><td>Git repo URL (SAST) or target web app URL (DAST)</td></tr>
+          <tr><td><code>target_path</code></td><td>TEXT</td><td>Server-side path to the uploaded ZIP (SAST upload only)</td></tr>
           <tr><td><code>celery_task_id</code></td><td>VARCHAR(255)</td><td>Celery AsyncResult ID for task revocation</td></tr>
           <tr><td><code>started_at</code></td><td>DATETIME</td><td>When the worker picked up the job</td></tr>
           <tr><td><code>completed_at</code></td><td>DATETIME</td><td>When the job finished (any terminal state)</td></tr>
           <tr><td><code>error_message</code></td><td>TEXT</td><td>Tool errors (non-fatal) or failure reason</td></tr>
           <tr><td><code>findings_count</code></td><td>INT</td><td>Denormalised total; avoids COUNT on findings for list views</td></tr>
-          <tr><td><code>extra</code></td><td>JSON</td><td>Free-form metadata (branch name, commit SHA, etc.)</td></tr>
+          <tr><td><code>extra</code></td><td>JSON</td><td>SAST: branch / commit metadata. DAST: profile, discovery_mode, openapi_url, exclude_paths, auth_type label, live progress fields. <strong>Never contains credentials.</strong></td></tr>
           <tr><td><code>created_at</code></td><td>DATETIME</td><td>Auto-set</td></tr>
           <tr><td><code>deleted_at</code></td><td>DATETIME</td><td>Soft-delete timestamp</td></tr>
         </tbody>

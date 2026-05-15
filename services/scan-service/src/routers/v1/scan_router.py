@@ -4,17 +4,19 @@ import os
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, Form, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, Form, Response, status
 from sqlalchemy.orm import Session
 
 from ...database.db_connection import get_db
 from ...schemas.scan import (
     SubmitGitScanRequest,
+    SubmitWebScanRequest,
     ScanJobOut,
     ScanJobDetailOut,
     ScanJobListOut,
     ScanStatusCountsOut,
     FindingsListOut,
+    OrgSummaryOut,
 )
 from ...security.cache import org_id_cache
 from ...security.http_client import get_org_service_client
@@ -81,6 +83,25 @@ async def submit_git_scan(
     return svc.submit_git_scan(org_id, user_id, body)
 
 
+# ── Submit web (DAST) scan ─────────────────────────────────────────────────────
+
+@scan_router.post(
+    "/organizations/{slug}/scans/web",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=ScanJobOut,
+)
+async def submit_web_scan(
+    slug: str,
+    request: Request,
+    body: SubmitWebScanRequest,
+    user_id: str = Depends(get_current_user_id),
+    svc: ScanService = Depends(_svc),
+    _priv: None = require_org_privilege("scans.run"),
+):
+    org_id = await _resolve_org_id(slug, request)
+    return svc.submit_web_scan(org_id, user_id, body)
+
+
 # ── Submit upload scan ─────────────────────────────────────────────────────────
 
 @scan_router.post(
@@ -121,6 +142,28 @@ async def list_scans(
     org_id = await _resolve_org_id(slug, request)
     total, items = svc.list_jobs(org_id, offset, limit, status_filter)
     return ScanJobListOut(total=total, items=items)
+
+
+# ── Org summary (dashboard overview) ──────────────────────────────────────────
+
+@scan_router.get(
+    "/organizations/{slug}/scans/summary",
+    response_model=OrgSummaryOut,
+)
+async def org_summary(
+    slug: str,
+    request: Request,
+    svc: ScanService = Depends(_svc),
+    _priv: None = require_org_privilege("scans.view"),
+):
+    """
+    Aggregate payload for the org dashboard overview tab.
+
+    Returns severity distribution (across all findings for the org), live
+    status counts, and the 8 most recent scans — all in a single DB pass.
+    """
+    org_id = await _resolve_org_id(slug, request)
+    return OrgSummaryOut(**svc.get_org_summary(org_id))
 
 
 # ── Stats (per-status counts) ──────────────────────────────────────────────────
@@ -182,6 +225,33 @@ async def list_findings(
         items=items,
         severity_counts=severity_counts,
         truncated=(offset + len(items)) < total,
+    )
+
+
+# ── Export findings ────────────────────────────────────────────────────────────
+
+@scan_router.get(
+    "/organizations/{slug}/scans/{job_id}/export",
+)
+async def export_findings(
+    slug: str,
+    job_id: str,
+    request: Request,
+    format: str = Query(default="json", regex="^(json|html)$"),
+    svc: ScanService = Depends(_svc),
+    _priv: None = require_org_privilege("scans.view"),
+):
+    """
+    Stream a JSON or HTML report of the scan back as a file download. The
+    body is fully built server-side (no streaming or large queries) because
+    even big scans rarely exceed a few MB once serialised.
+    """
+    org_id = await _resolve_org_id(slug, request)
+    content, content_type, filename = svc.export_findings(org_id, job_id, format)
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

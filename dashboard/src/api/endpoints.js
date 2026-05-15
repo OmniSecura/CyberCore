@@ -79,6 +79,8 @@ export const scanApi = {
   },
   get:      (slug, jobId)  => api.get(`/scans/organizations/${slug}/scans/${jobId}`),
   stats:    (slug)         => api.get(`/scans/organizations/${slug}/scans/stats`),
+  // Single-call org overview: severity totals + status counts + 8 recent scans.
+  summary:  (slug)         => api.get(`/scans/organizations/${slug}/scans/summary`),
   findings: (slug, jobId, { offset = 0, limit = 100, severity, tool } = {}) => {
     const qs = new URLSearchParams({ offset, limit })
     if (severity) qs.set('severity', severity)
@@ -86,6 +88,8 @@ export const scanApi = {
     return api.get(`/scans/organizations/${slug}/scans/${jobId}/findings?${qs}`)
   },
   submitGit: (slug, data)  => api.post(`/scans/organizations/${slug}/scans/git`, data),
+  // DAST submit. `data = { name, target_url, profile: 'passive' | 'active' }`
+  submitWeb: (slug, data)  => api.post(`/scans/organizations/${slug}/scans/web`, data),
   submitUpload: async (slug, name, file) => {
     const fd = new FormData()
     fd.append('name', name)
@@ -106,6 +110,29 @@ export const scanApi = {
   },
   cancel:    (slug, jobId) => api.post(`/scans/organizations/${slug}/scans/${jobId}/cancel`),
   remove:    (slug, jobId) => api.delete(`/scans/organizations/${slug}/scans/${jobId}`),
+  // Export returns a downloadable blob, not JSON — we bypass the standard
+  // api.* client because it parses JSON and would mangle the HTML body.
+  exportReport: async (slug, jobId, format = 'json') => {
+    const res = await fetch(
+      `/api/v1/scans/organizations/${slug}/scans/${jobId}/export?format=${encodeURIComponent(format)}`,
+      { credentials: 'include' }
+    )
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      const err = new Error(data?.detail || 'Export failed')
+      err.status = res.status
+      err.data   = data
+      throw err
+    }
+    // Pull the filename out of Content-Disposition so the saved file keeps
+    // the server-generated "cybercore-<name>-<ts>" name instead of getting
+    // a random UUID from the browser.
+    const cd = res.headers.get('Content-Disposition') || ''
+    const match = cd.match(/filename="([^"]+)"/)
+    const filename = match?.[1] || `report.${format}`
+    const blob = await res.blob()
+    return { blob, filename }
+  },
 }
 
 // ── Email ─────────────────────────────────────────────────────────────────

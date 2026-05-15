@@ -11,6 +11,7 @@ from .database.models.Base import Base
 from .database.models.ScanJob import ScanJob          # noqa: F401 — must be imported so SQLAlchemy registers the relationship
 from .database.models.ScanFinding import ScanFinding  # noqa: F401
 from .security.http_client import close_clients
+from .security.headers_middleware import SecurityHeadersMiddleware
 
 
 def create_app() -> FastAPI:
@@ -29,6 +30,11 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
         allow_credentials=True,
     )
+
+    # Defense-in-depth response headers — closes the X-Content-Type-Options,
+    # X-Frame-Options, Referrer-Policy, Permissions-Policy findings that ZAP
+    # raises on every endpoint by default.
+    app.add_middleware(SecurityHeadersMiddleware)
 
     @app.get("/", include_in_schema=False)
     @app.get("/docs", include_in_schema=False)

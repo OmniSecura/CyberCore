@@ -133,9 +133,36 @@ function SevBadge({ severity }) {
 const FREE_SCAN_LIMIT = 3
 
 function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
-  const [mode, setMode]       = useState('git')   // 'git' | 'zip'
+  // scanType: 'sast' | 'dast' — top-level switch determines the rest of the form
+  const [scanType, setScanType] = useState('sast')
+  // SAST source: 'git' | 'zip'
+  const [mode, setMode]       = useState('git')
+  // DAST profile: 'passive' | 'active'
+  const [profile, setProfile] = useState('passive')
+  // DAST endpoint discovery: 'spider' | 'ajax_spider' | 'openapi'
+  const [discoveryMode, setDiscoveryMode] = useState('spider')
+  const [openapiUrl, setOpenapiUrl]       = useState('')
+  // Multi-line textarea; we split on newlines when submitting so the user
+  // can paste a list naturally.
+  const [excludePaths, setExcludePaths]   = useState('')
+  // Auth: 'none' | 'bearer' | 'cookie' | 'form' | 'json_form'. Credentials
+  // are never stored — they're submitted once and used only by the worker.
+  const [authMode, setAuthMode]   = useState('none')
+  const [authToken, setAuthToken] = useState('')
+  const [authCookie, setAuthCookie] = useState('')
+  const [authLoginUrl, setAuthLoginUrl]   = useState('')
+  const [authUsername, setAuthUsername]   = useState('')
+  const [authPassword, setAuthPassword]   = useState('')
+  const [authUserField, setAuthUserField] = useState('username')
+  const [authPassField, setAuthPassField] = useState('password')
+  // Free-form JSON body for json_form mode — covers cases where the login
+  // endpoint needs more than just username+password (client_id, nested
+  // envelopes, custom keys).
+  const [authJsonBody, setAuthJsonBody] = useState(
+    '{\n  "email": "{%username%}",\n  "password": "{%password%}"\n}'
+  )
   const [name, setName]       = useState('')
-  const [url, setUrl]         = useState('')
+  const [url, setUrl]         = useState('')   // shared by SAST git-mode and DAST
   const [file, setFile]       = useState(null)
   const [loading, setLoading] = useState(false)
   const [err, setErr]         = useState(null)
@@ -144,8 +171,31 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
   const isFree       = plan === 'free'
   const limitReached = isFree && activeCount >= FREE_SCAN_LIMIT
 
-  const canSubmit = !loading && !limitReached && name.trim() &&
-    (mode === 'git' ? url.trim() : !!file)
+  // Block submit if auth fields are inconsistent — backend would 422 us
+  // anyway but it's nicer to enable the button only when the form is valid.
+  // For json_form we additionally require the body template to contain both
+  // placeholders. Server validates JSON shape; the placeholder check here
+  // matches against the same rule so the Submit button reflects reality.
+  const jsonBodyOk = (
+    authJsonBody.includes('{%username%}') && authJsonBody.includes('{%password%}')
+  )
+  const dastAuthOk = (
+    authMode === 'none'
+      || (authMode === 'bearer' && authToken.trim())
+      || (authMode === 'cookie' && authCookie.trim())
+      || (authMode === 'form'
+          && authLoginUrl.trim() && authUsername.trim() && authPassword)
+      || (authMode === 'json_form'
+          && authLoginUrl.trim() && authUsername.trim() && authPassword && jsonBodyOk)
+  )
+
+  const canSubmit = !loading && !limitReached && name.trim() && (
+    scanType === 'dast'
+      ? (url.trim()
+          && (discoveryMode !== 'openapi' || openapiUrl.trim())
+          && dastAuthOk)
+      : (mode === 'git' ? url.trim() : !!file)
+  )
 
   async function submit(e) {
     e.preventDefault()
@@ -153,7 +203,49 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
     setLoading(true); setErr(null)
     try {
       let job
-      if (mode === 'git') {
+      if (scanType === 'dast') {
+        // Split the textarea on newlines AND commas — both feel natural and
+        // there's no ambiguity since neither belongs in a URL path.
+        const excludeList = excludePaths
+          .split(/[\n,]/)
+          .map(s => s.trim())
+          .filter(Boolean)
+        const payload = {
+          name: name.trim(),
+          target_url: url.trim(),
+          profile,
+          discovery_mode: discoveryMode,
+          exclude_paths: excludeList,
+        }
+        if (discoveryMode === 'openapi') {
+          payload.openapi_url = openapiUrl.trim()
+        }
+        if (authMode === 'bearer') {
+          payload.auth = { type: 'bearer', token: authToken.trim() }
+        } else if (authMode === 'cookie') {
+          payload.auth = { type: 'cookie', cookie: authCookie.trim() }
+        } else if (authMode === 'form') {
+          payload.auth = {
+            type: 'form',
+            login_url: authLoginUrl.trim(),
+            username: authUsername.trim(),
+            password: authPassword,
+            username_field: authUserField.trim() || 'username',
+            password_field: authPassField.trim() || 'password',
+          }
+        } else if (authMode === 'json_form') {
+          payload.auth = {
+            type: 'json_form',
+            login_url: authLoginUrl.trim(),
+            username: authUsername.trim(),
+            password: authPassword,
+            // The full request body as-is — backend validates that it has
+            // both placeholders and parses as JSON.
+            body_template: authJsonBody,
+          }
+        }
+        job = await scanApi.submitWeb(slug, payload)
+      } else if (mode === 'git') {
         job = await scanApi.submitGit(slug, { name: name.trim(), target_url: url.trim() })
       } else {
         job = await scanApi.submitUpload(slug, name.trim(), file)
@@ -163,6 +255,24 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
       setErr(ex?.data?.detail || 'Failed to submit scan.')
       setLoading(false)
     }
+  }
+
+  // Switching scan type resets the inner mode/inputs so we don't carry over
+  // a SAST git URL into a DAST form by accident.
+  function pickScanType(t) {
+    setScanType(t)
+    setErr(null)
+    setUrl('')
+    setFile(null)
+    setOpenapiUrl('')
+    setExcludePaths('')
+    setDiscoveryMode('spider')
+    setAuthMode('none')
+    setAuthToken(''); setAuthCookie('')
+    setAuthLoginUrl(''); setAuthUsername(''); setAuthPassword('')
+    setAuthUserField('username'); setAuthPassField('password')
+    setAuthJsonBody('{\n  "email": "{%username%}",\n  "password": "{%password%}"\n}')
+    if (fileRef.current) fileRef.current.value = ''
   }
 
   function handleFile(e) {
@@ -183,8 +293,14 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
         {/* Header */}
         <div className="cc-modal-head">
           <div>
-            <div className="cc-modal-title">New SAST Scan</div>
-            <div className="cc-modal-sub">Detect security vulnerabilities in your code</div>
+            <div className="cc-modal-title">
+              New {scanType === 'dast' ? 'DAST' : 'SAST'} Scan
+            </div>
+            <div className="cc-modal-sub">
+              {scanType === 'dast'
+                ? 'Test a running web application for security issues'
+                : 'Detect security vulnerabilities in your code'}
+            </div>
           </div>
           <button className="cc-modal-x" onClick={onClose} type="button"><IconX /></button>
         </div>
@@ -211,23 +327,43 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
 
             {err && <div className="cc-alert cc-alert--err"><IconErr />{err}</div>}
 
-            {/* Source type tabs */}
-            <div className="sc-mode-tabs">
+            {/* Scan type selector — top-level choice between SAST and DAST */}
+            <div className="sc-mode-tabs" style={{ marginBottom: 16 }}>
               <button
                 type="button"
-                className={`sc-mode-tab${mode === 'git' ? ' sc-mode-tab--on' : ''}`}
-                onClick={() => { setMode('git'); setErr(null) }}
+                className={`sc-mode-tab${scanType === 'sast' ? ' sc-mode-tab--on' : ''}`}
+                onClick={() => pickScanType('sast')}
               >
-                <IconGit /> Git URL
+                <IconCode /> SAST · Source code
               </button>
               <button
                 type="button"
-                className={`sc-mode-tab${mode === 'zip' ? ' sc-mode-tab--on' : ''}`}
-                onClick={() => { setMode('zip'); setErr(null) }}
+                className={`sc-mode-tab${scanType === 'dast' ? ' sc-mode-tab--on' : ''}`}
+                onClick={() => pickScanType('dast')}
               >
-                <IconZip /> ZIP Archive
+                <IconScan /> DAST · Running app
               </button>
             </div>
+
+            {/* SAST source-type tabs (git / zip) — only visible for SAST */}
+            {scanType === 'sast' && (
+              <div className="sc-mode-tabs">
+                <button
+                  type="button"
+                  className={`sc-mode-tab${mode === 'git' ? ' sc-mode-tab--on' : ''}`}
+                  onClick={() => { setMode('git'); setErr(null) }}
+                >
+                  <IconGit /> Git URL
+                </button>
+                <button
+                  type="button"
+                  className={`sc-mode-tab${mode === 'zip' ? ' sc-mode-tab--on' : ''}`}
+                  onClick={() => { setMode('zip'); setErr(null) }}
+                >
+                  <IconZip /> ZIP Archive
+                </button>
+              </div>
+            )}
 
             {/* Scan name */}
             <div className="cc-mfield">
@@ -235,15 +371,357 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
               <input
                 value={name}
                 onChange={e => setName(e.target.value)}
-                placeholder="e.g. Main branch — sprint 42"
+                placeholder={scanType === 'dast'
+                  ? 'e.g. Production app — staging URL'
+                  : 'e.g. Main branch — sprint 42'}
                 required
                 autoFocus
                 disabled={limitReached}
               />
             </div>
 
-            {/* Git URL mode */}
-            {mode === 'git' && (
+            {/* DAST: target URL + profile */}
+            {scanType === 'dast' && (
+              <>
+                <div className="cc-mfield">
+                  <label>Target URL</label>
+                  <input
+                    value={url}
+                    onChange={e => setUrl(e.target.value)}
+                    placeholder="https://app.example.com"
+                    required
+                    disabled={limitReached}
+                  />
+                  <div style={{
+                    font: '400 12px/1.4 var(--font-body)',
+                    color: '#8899AA',
+                    marginTop: 6,
+                  }}>
+                    Only scan applications you own or have written permission to test.
+                  </div>
+                </div>
+
+                <div className="cc-mfield">
+                  <label>Scan profile</label>
+                  <div className="sc-mode-tabs" style={{ marginTop: 4 }}>
+                    <button
+                      type="button"
+                      className={`sc-mode-tab${profile === 'passive' ? ' sc-mode-tab--on' : ''}`}
+                      onClick={() => setProfile('passive')}
+                      disabled={limitReached}
+                    >
+                      Passive (safe)
+                    </button>
+                    <button
+                      type="button"
+                      className={`sc-mode-tab${profile === 'active' ? ' sc-mode-tab--on' : ''}`}
+                      onClick={() => setProfile('active')}
+                      disabled={limitReached}
+                    >
+                      Active (sends attack payloads)
+                    </button>
+                  </div>
+                  <div style={{
+                    font: '400 12px/1.5 var(--font-body)',
+                    color: '#8899AA',
+                    marginTop: 8,
+                  }}>
+                    {profile === 'passive'
+                      ? 'Crawls the app and inspects headers, cookies, TLS, and form structure. No attack payloads are sent.'
+                      : 'In addition to the passive checks, ZAP will send real attack payloads (XSS, SQLi, command injection, SSRF, …) to discovered endpoints. Use only on apps you own.'}
+                  </div>
+                </div>
+
+                {/* Discovery mode — how ZAP finds endpoints to scan */}
+                <div className="cc-mfield">
+                  <label>Endpoint discovery</label>
+                  <div className="sc-mode-tabs" style={{ marginTop: 4 }}>
+                    <button
+                      type="button"
+                      className={`sc-mode-tab${discoveryMode === 'spider' ? ' sc-mode-tab--on' : ''}`}
+                      onClick={() => setDiscoveryMode('spider')}
+                      disabled={limitReached}
+                    >
+                      Spider
+                    </button>
+                    <button
+                      type="button"
+                      className={`sc-mode-tab${discoveryMode === 'ajax_spider' ? ' sc-mode-tab--on' : ''}`}
+                      onClick={() => setDiscoveryMode('ajax_spider')}
+                      disabled={limitReached}
+                    >
+                      AJAX spider (SPA)
+                    </button>
+                    <button
+                      type="button"
+                      className={`sc-mode-tab${discoveryMode === 'openapi' ? ' sc-mode-tab--on' : ''}`}
+                      onClick={() => setDiscoveryMode('openapi')}
+                      disabled={limitReached}
+                    >
+                      OpenAPI
+                    </button>
+                  </div>
+                  <div style={{
+                    font: '400 12px/1.5 var(--font-body)',
+                    color: '#8899AA',
+                    marginTop: 8,
+                  }}>
+                    {discoveryMode === 'spider' && 'Classic HTTP crawler. Fast, but misses pages rendered by JavaScript.'}
+                    {discoveryMode === 'ajax_spider' && 'Runs a headless browser to find routes in SPAs (React, Vue, Angular). ~5× slower than the regular spider.'}
+                    {discoveryMode === 'openapi' && 'Imports an OpenAPI/Swagger spec from a URL — gives full API coverage without crawling.'}
+                  </div>
+                </div>
+
+                {/* OpenAPI spec URL — only when openapi discovery is picked */}
+                {discoveryMode === 'openapi' && (
+                  <div className="cc-mfield">
+                    <label>OpenAPI spec URL</label>
+                    <input
+                      value={openapiUrl}
+                      onChange={e => setOpenapiUrl(e.target.value)}
+                      placeholder="https://app.example.com/openapi.json"
+                      required
+                      disabled={limitReached}
+                    />
+                    <div style={{
+                      font: '400 12px/1.4 var(--font-body)',
+                      color: '#8899AA',
+                      marginTop: 6,
+                    }}>
+                      FastAPI auto-publishes this at <code>/openapi.json</code>. Other frameworks may use <code>/swagger.json</code>.
+                    </div>
+                  </div>
+                )}
+
+                {/* Advanced: exclude paths */}
+                <div className="cc-mfield">
+                  <label>Exclude paths <span style={{ color: '#8899AA', fontWeight: 400 }}>(optional)</span></label>
+                  <textarea
+                    value={excludePaths}
+                    onChange={e => setExcludePaths(e.target.value)}
+                    placeholder={'/logout\n/admin/delete-*\n/users/me'}
+                    rows={3}
+                    disabled={limitReached}
+                    style={{
+                      width: '100%',
+                      font: '400 13px/1.5 var(--font-mono)',
+                      padding: '8px 10px',
+                      border: '1px solid #D5DFEA',
+                      borderRadius: 6,
+                      resize: 'vertical',
+                      background: '#fff',
+                      color: '#0A1628',
+                    }}
+                  />
+                  <div style={{
+                    font: '400 12px/1.5 var(--font-body)',
+                    color: '#8899AA',
+                    marginTop: 6,
+                  }}>
+                    One pattern per line. Use <code>/path</code> or <code>/path/*</code> globs to keep destructive endpoints out of scope (especially important for active scans).
+                  </div>
+                </div>
+
+                {/* Authentication — let ZAP scan logged-in endpoints */}
+                <div className="cc-mfield">
+                  <label>Authentication <span style={{ color: '#8899AA', fontWeight: 400 }}>(optional)</span></label>
+                  <div className="sc-mode-tabs" style={{ marginTop: 4, flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className={`sc-mode-tab${authMode === 'none' ? ' sc-mode-tab--on' : ''}`}
+                      onClick={() => setAuthMode('none')}
+                      disabled={limitReached}
+                    >
+                      None
+                    </button>
+                    <button
+                      type="button"
+                      className={`sc-mode-tab${authMode === 'bearer' ? ' sc-mode-tab--on' : ''}`}
+                      onClick={() => setAuthMode('bearer')}
+                      disabled={limitReached}
+                    >
+                      Bearer token
+                    </button>
+                    <button
+                      type="button"
+                      className={`sc-mode-tab${authMode === 'cookie' ? ' sc-mode-tab--on' : ''}`}
+                      onClick={() => setAuthMode('cookie')}
+                      disabled={limitReached}
+                    >
+                      Cookie
+                    </button>
+                    <button
+                      type="button"
+                      className={`sc-mode-tab${authMode === 'form' ? ' sc-mode-tab--on' : ''}`}
+                      onClick={() => setAuthMode('form')}
+                      disabled={limitReached}
+                    >
+                      Form login
+                    </button>
+                    <button
+                      type="button"
+                      className={`sc-mode-tab${authMode === 'json_form' ? ' sc-mode-tab--on' : ''}`}
+                      onClick={() => setAuthMode('json_form')}
+                      disabled={limitReached}
+                    >
+                      JSON login
+                    </button>
+                  </div>
+                  <div style={{
+                    font: '400 12px/1.5 var(--font-body)',
+                    color: '#8899AA',
+                    marginTop: 8,
+                  }}>
+                    {authMode === 'none' && 'Scan runs unauthenticated. Use this if the target is fully public.'}
+                    {authMode === 'bearer' && 'Adds `Authorization: Bearer <token>` to every ZAP request. Works for JWT/API key auth.'}
+                    {authMode === 'cookie' && 'Adds your raw Cookie header to every request. Useful for httpOnly session cookies — log into the app in your browser, copy the Cookie header from DevTools.'}
+                    {authMode === 'form' && 'ZAP performs a form-encoded login POST (`username=…&password=…`) and reuses the session for all scanning. Classic web forms.'}
+                    {authMode === 'json_form' && 'ZAP POSTs a JSON body to the login URL — for FastAPI/Express APIs whose login endpoint expects `{ "email": "…", "password": "…" }`.'}
+                    {authMode !== 'none' && (
+                      <div style={{ marginTop: 6, color: '#C53030' }}>
+                        Credentials are never stored — they live only in the worker queue and are discarded after the scan.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {authMode === 'bearer' && (
+                  <div className="cc-mfield">
+                    <label>Bearer token</label>
+                    <input
+                      type="password"
+                      value={authToken}
+                      onChange={e => setAuthToken(e.target.value)}
+                      placeholder="eyJhbGciOi…"
+                      autoComplete="new-password"
+                      disabled={limitReached}
+                    />
+                  </div>
+                )}
+
+                {authMode === 'cookie' && (
+                  <div className="cc-mfield">
+                    <label>Cookie header value</label>
+                    <input
+                      type="password"
+                      value={authCookie}
+                      onChange={e => setAuthCookie(e.target.value)}
+                      placeholder="access_token=ey…; refresh_token=ey…"
+                      autoComplete="new-password"
+                      disabled={limitReached}
+                    />
+                    <div style={{
+                      font: '400 12px/1.4 var(--font-body)',
+                      color: '#8899AA',
+                      marginTop: 6,
+                    }}>
+                      In your browser DevTools → Application → Cookies, copy the value of every cookie you need (usually <code>access_token</code> and <code>refresh_token</code>) joined by <code>; </code>.
+                    </div>
+                  </div>
+                )}
+
+                {(authMode === 'form' || authMode === 'json_form') && (
+                  <>
+                    <div className="cc-mfield">
+                      <label>Login URL</label>
+                      <input
+                        value={authLoginUrl}
+                        onChange={e => setAuthLoginUrl(e.target.value)}
+                        placeholder={authMode === 'json_form'
+                          ? 'http://auth:8000/api/v1/users/login'
+                          : 'https://app.example.com/login'}
+                        disabled={limitReached}
+                      />
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      <div className="cc-mfield">
+                        <label>Username / email</label>
+                        <input
+                          value={authUsername}
+                          onChange={e => setAuthUsername(e.target.value)}
+                          autoComplete="off"
+                          disabled={limitReached}
+                        />
+                      </div>
+                      <div className="cc-mfield">
+                        <label>Password</label>
+                        <input
+                          type="password"
+                          value={authPassword}
+                          onChange={e => setAuthPassword(e.target.value)}
+                          autoComplete="new-password"
+                          disabled={limitReached}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Form-encoded login: simple two-field-name override */}
+                    {authMode === 'form' && (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                        <div className="cc-mfield">
+                          <label>Username field name</label>
+                          <input
+                            value={authUserField}
+                            onChange={e => setAuthUserField(e.target.value)}
+                            placeholder="username"
+                            disabled={limitReached}
+                          />
+                        </div>
+                        <div className="cc-mfield">
+                          <label>Password field name</label>
+                          <input
+                            value={authPassField}
+                            onChange={e => setAuthPassField(e.target.value)}
+                            placeholder="password"
+                            disabled={limitReached}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* JSON login: free-form body textarea — covers every login
+                        shape, including extra fields and nested envelopes. */}
+                    {authMode === 'json_form' && (
+                      <div className="cc-mfield">
+                        <label>Request body (JSON)</label>
+                        <textarea
+                          value={authJsonBody}
+                          onChange={e => setAuthJsonBody(e.target.value)}
+                          rows={6}
+                          spellCheck={false}
+                          disabled={limitReached}
+                          style={{
+                            width: '100%',
+                            font: '400 13px/1.5 var(--font-mono)',
+                            padding: '8px 10px',
+                            border: '1px solid #D5DFEA',
+                            borderRadius: 6,
+                            resize: 'vertical',
+                            background: '#fff',
+                            color: '#0A1628',
+                          }}
+                        />
+                        <div style={{
+                          font: '400 12px/1.5 var(--font-body)',
+                          color: '#8899AA',
+                          marginTop: 6,
+                        }}>
+                          Use the literal placeholders <code>{'{%username%}'}</code> and <code>{'{%password%}'}</code> — ZAP substitutes them with the values above. Add any other fields your login endpoint needs (e.g. <code>client_id</code>, <code>device_id</code>, <code>remember_me</code>).
+                          {!jsonBodyOk && (
+                            <div style={{ marginTop: 4, color: '#C53030' }}>
+                              Body must contain both placeholders.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </>
+            )}
+
+            {/* Git URL mode (SAST only) */}
+            {scanType === 'sast' && mode === 'git' && (
               <div className="cc-mfield">
                 <label>Repository URL</label>
                 <input
@@ -256,8 +734,8 @@ function CreateScanModal({ slug, plan, activeCount, onCreated, onClose }) {
               </div>
             )}
 
-            {/* ZIP mode */}
-            {mode === 'zip' && (
+            {/* ZIP mode (SAST only) */}
+            {scanType === 'sast' && mode === 'zip' && (
               <div className="cc-mfield">
                 <label>ZIP archive</label>
                 <div
@@ -366,7 +844,7 @@ function ScanList({ slug, plan, has, onSelect }) {
         <div>
           <div style={{ font: '600 15px/1 var(--font-display)', color: '#0A1628' }}>Security Scans</div>
           <div style={{ font: '400 13px/1.5 var(--font-body)', color: '#8899AA', marginTop: 4 }}>
-            Run SAST analysis to detect vulnerabilities in your repositories
+            Run SAST on source code or DAST on a live web target
           </div>
         </div>
         {has('scans.run') && (
@@ -507,6 +985,35 @@ function splitFilePath(filePath) {
   return { dir: normalized.slice(0, idx + 1), filename: normalized.slice(idx + 1) }
 }
 
+/** Map confidence string → 0-100 for the progress bar. */
+function confidencePct(conf) {
+  if (!conf) return null
+  switch (conf.toLowerCase()) {
+    case 'confirmed':                         return 100
+    case 'high':                              return 88
+    case 'probable': case 'medium':           return 65
+    case 'tentative': case 'low':             return 35
+    case 'false positive':                    return 10
+    default:                                  return null
+  }
+}
+
+/** Confidence bar — only rendered when a confidence value is present. */
+function ConfBar({ confidence }) {
+  const pct = confidencePct(confidence)
+  if (pct === null) return null
+  // Colour goes from teal (high) through amber (medium) to muted (low)
+  const fill = pct >= 80 ? '#00C2CB' : pct >= 55 ? '#D97706' : '#AABBC8'
+  return (
+    <div className="sc-conf-wrap">
+      <div className="sc-conf-bar">
+        <div className="sc-conf-fill" style={{ width: `${pct}%`, background: fill }} />
+      </div>
+      <span className="sc-conf-pct">{pct}%</span>
+    </div>
+  )
+}
+
 function FindingRow({ finding }) {
   const [open, setOpen]       = useState(false)
   const [copied, setCopied]   = useState(false)
@@ -531,6 +1038,8 @@ function FindingRow({ finding }) {
             <span className="sc-finding-line">:{finding.line_start}</span>
           )}
         </span>
+        {finding.tool && <span className="sc-tool-pill">{finding.tool}</span>}
+        <ConfBar confidence={finding.confidence} />
         <IconChevron open={open} />
       </button>
 
@@ -582,6 +1091,11 @@ function FindingsContent({ slug, jobId, scan }) {
   const [total, setTotal]               = useState(0)
   const [page, setPage]                 = useState(1)
   const [severityCounts, setSevCounts]  = useState({})
+  // allSevCounts and allTools are populated from unfiltered loads and never
+  // cleared when a filter is active — this keeps the filter UI visible so
+  // the user can always switch to a different filter or clear the current one.
+  const [allSevCounts, setAllSevCounts] = useState({})
+  const [allTools, setAllTools]         = useState([])
   const [loading, setLoading]           = useState(true)
   const [err, setErr]                   = useState(null)
   const [toolFilter, setToolFilter]     = useState(null)
@@ -608,6 +1122,16 @@ function FindingsContent({ slug, jobId, scan }) {
         setFindings(data.items)
         setTotal(data.total)
         setSevCounts(data.severity_counts || {})
+        // When no tool filter is active we have the full picture — lock in
+        // severity counts and the tool list so they stay visible even after
+        // the user narrows down with a filter.
+        if (!toolFilter) {
+          setAllSevCounts(data.severity_counts || {})
+          const tools = [...new Set(data.items.map(f => f.tool).filter(Boolean))]
+          if (tools.length > 0) {
+            setAllTools(prev => [...new Set([...prev, ...tools])])
+          }
+        }
         setLoading(false)
       })
       .catch(ex => { setErr(ex?.data?.detail || 'Failed to load findings.'); setLoading(false) })
@@ -643,51 +1167,64 @@ function FindingsContent({ slug, jobId, scan }) {
   }
   const tools = Object.keys(byTool)
 
-  // Severity totals for the summary bar
-  const hasCounts = SEVERITY_ORDER.some(s => severityCounts[s] > 0)
+  // Severity totals for the summary bar — prefer allSevCounts (unfiltered)
+  // so the bar doesn't go blank when the user activates a severity filter.
+  const displayCounts = SEVERITY_ORDER.some(s => allSevCounts[s] > 0) ? allSevCounts : severityCounts
+  const hasCounts = SEVERITY_ORDER.some(s => displayCounts[s] > 0)
 
   return (
     <div>
-      {/* Severity summary bar */}
-      <div className="sc-sev-bar">
-        {hasCounts ? (
-          SEVERITY_ORDER.map(s => severityCounts[s] > 0 && (
+      {/* Severity stat cards — big-number cards for each severity level.
+          Always rendered from displayCounts (unfiltered snapshot) so they
+          stay visible after the user activates a filter. Clicking a card
+          toggles the severity filter; clicking the active one clears it. */}
+      {hasCounts ? (
+        <div className="sc-sev-cards">
+          {SEVERITY_ORDER.map(s => displayCounts[s] > 0 && (
             <button
               key={s}
-              className={`sc-sev-chip sc-sev--${s}${sevFilter === s ? ' sc-sev-chip--on' : ''}`}
+              className={`sc-sev-card sc-sev-card--${s}${sevFilter === s ? ' sc-sev-card--on' : ''}`}
               onClick={() => setSevFilter(f => f === s ? null : s)}
             >
-              <span className="sc-sev-chip-num">{severityCounts[s]}</span>
-              {s}
+              <div className="sc-sev-card-label">{s}</div>
+              <div className="sc-sev-card-val">{displayCounts[s]}</div>
             </button>
-          ))
-        ) : (
-          !loading && (
-            <span className="sc-sev-ok">✓ No findings</span>
-          )
-        )}
-        {sevFilter && (
-          <button className="sc-clear-filter" onClick={() => setSevFilter(null)}>
-            <IconX /> Clear filter
-          </button>
-        )}
-      </div>
+          ))}
+          {sevFilter && (
+            <button
+              className="sc-sev-card"
+              style={{ background: '#F4F8FC', color: '#8899AA', border: '2px dashed #D6E4F0' }}
+              onClick={() => setSevFilter(null)}
+            >
+              <div className="sc-sev-card-label">Filter</div>
+              <div className="sc-sev-card-val" style={{ fontSize: 13, marginTop: 8 }}>Clear ×</div>
+            </button>
+          )}
+        </div>
+      ) : (
+        !loading && <div className="sc-sev-bar"><span className="sc-sev-ok">✓ No findings</span></div>
+      )}
 
-      {/* Tool filter tabs — always visible when more than one tool present.
-          The two filters are independent: severity narrows by severity AND
-          tool narrows by tool, both applied server-side. */}
-      {tools.length > 1 && (
+      {/* Tool filter tabs — rendered from allTools (the unfiltered snapshot)
+          so they stay visible even when a filter is active. This means the
+          user can always switch to a different tool or click "All" to clear.
+          Counts per tab come from byTool (current page) and are shown only
+          when data is present so no stale "0" appears for inactive tabs. */}
+      {allTools.length > 1 && (
         <div className="sc-tool-tabs">
           <button className={`sc-tool-tab${!toolFilter ? ' sc-tool-tab--on' : ''}`} onClick={() => setToolFilter(null)}>
-            All <span className="sc-tool-count">{total}</span>
+            All {!toolFilter && <span className="sc-tool-count">{total}</span>}
           </button>
-          {tools.map(tool => (
+          {allTools.map(tool => (
             <button
               key={tool}
               className={`sc-tool-tab${toolFilter === tool ? ' sc-tool-tab--on' : ''}`}
               onClick={() => setToolFilter(t => t === tool ? null : tool)}
             >
-              {tool} <span className="sc-tool-count">{byTool[tool].length}</span>
+              {tool}
+              {byTool[tool] != null && (
+                <span className="sc-tool-count">{byTool[tool].length}</span>
+              )}
             </button>
           ))}
         </div>
@@ -823,7 +1360,11 @@ function OverviewContent({ scan }) {
           <div className="cc-info-row">
             <div className="cc-info-k">Source</div>
             <div className="cc-info-v">
-              {scan.target_type === 'git_url' ? 'Git Repository' : 'ZIP Upload'}
+              {scan.target_type === 'git_url'
+                ? 'Git Repository'
+                : scan.target_type === 'web_url'
+                  ? 'Web Application'
+                  : 'ZIP Upload'}
             </div>
           </div>
           {scan.target_url && (
@@ -831,6 +1372,66 @@ function OverviewContent({ scan }) {
               <div className="cc-info-k">URL</div>
               <div className="cc-info-v cc-info-v--mono" style={{ wordBreak: 'break-all' }}>
                 {scan.target_url}
+              </div>
+            </div>
+          )}
+          {scan.scan_type === 'dast' && scan.extra?.profile && (
+            <div className="cc-info-row">
+              <div className="cc-info-k">Profile</div>
+              <div className="cc-info-v" style={{ textTransform: 'capitalize' }}>
+                {scan.extra.profile}
+              </div>
+            </div>
+          )}
+          {scan.scan_type === 'dast' && scan.extra?.discovery_mode && (
+            <div className="cc-info-row">
+              <div className="cc-info-k">Discovery</div>
+              <div className="cc-info-v">
+                {scan.extra.discovery_mode === 'ajax_spider' ? 'AJAX spider (SPA)'
+                  : scan.extra.discovery_mode === 'openapi' ? 'OpenAPI import'
+                  : 'Spider'}
+              </div>
+            </div>
+          )}
+          {scan.scan_type === 'dast' && scan.extra?.openapi_url && (
+            <div className="cc-info-row">
+              <div className="cc-info-k">OpenAPI</div>
+              <div className="cc-info-v cc-info-v--mono" style={{ wordBreak: 'break-all' }}>
+                {scan.extra.openapi_url}
+              </div>
+            </div>
+          )}
+          {scan.scan_type === 'dast' && scan.extra?.exclude_paths?.length > 0 && (
+            <div className="cc-info-row">
+              <div className="cc-info-k">Excludes</div>
+              <div className="cc-info-v cc-info-v--mono" style={{ fontSize: 12 }}>
+                {scan.extra.exclude_paths.join(', ')}
+              </div>
+            </div>
+          )}
+          {scan.scan_type === 'dast' && scan.extra?.auth_type && (
+            <div className="cc-info-row">
+              <div className="cc-info-k">Auth</div>
+              <div className="cc-info-v" style={{ textTransform: 'capitalize' }}>
+                {scan.extra.auth_type}
+                <span style={{ font: '400 11px/1 var(--font-body)', color: '#8899AA', marginLeft: 8 }}>
+                  (credentials not stored)
+                </span>
+              </div>
+            </div>
+          )}
+          {scan.status === 'running' && scan.scan_type === 'dast' && scan.extra && (
+            <div className="cc-info-row">
+              <div className="cc-info-k">Phase</div>
+              <div className="cc-info-v">
+                <span style={{ textTransform: 'capitalize' }}>
+                  {scan.extra.current_phase || 'starting'}
+                </span>
+                {typeof scan.extra.progress === 'number' && (
+                  <span style={{ color: '#8899AA', marginLeft: 8 }}>
+                    {scan.extra.progress}%
+                  </span>
+                )}
               </div>
             </div>
           )}
@@ -901,7 +1502,22 @@ function ScanDetail({ slug, jobId, has, onBack }) {
   const [cancelling, setCancelling] = useState(false)
   const [deleting, setDeleting]   = useState(false)
   const [confirmDel, setConfirmDel] = useState(false)
+  const [exportOpen, setExportOpen]   = useState(false)
+  const [rescanning, setRescanning]   = useState(false)
   const pollRef = useRef(null)
+  const exportMenuRef = useRef(null)
+
+  // Close the export dropdown when the user clicks anywhere outside it.
+  useEffect(() => {
+    if (!exportOpen) return
+    const onDocClick = (e) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target)) {
+        setExportOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [exportOpen])
 
   const load = useCallback(() => {
     return scanApi.get(slug, jobId)
@@ -961,6 +1577,25 @@ function ScanDetail({ slug, jobId, has, onBack }) {
     }
   }
 
+  // Re-submit the same scan (only meaningful for git scans — upload scans
+  // can't be re-run without the original file, and DAST credentials aren't
+  // stored server-side). On success we navigate directly to the new job.
+  async function doRescan() {
+    if (!scan || scan.target_type !== 'git_url') return
+    setRescanning(true)
+    try {
+      await scanApi.submitGit(slug, {
+        name: scan.name,
+        target_url: scan.target_url,
+      })
+      onBack()  // go back to list — the new job will appear there
+    } catch (ex) {
+      alert(ex?.data?.detail || 'Failed to re-submit scan.')
+    } finally {
+      setRescanning(false)
+    }
+  }
+
   async function doDelete() {
     setDeleting(true)
     try {
@@ -970,6 +1605,25 @@ function ScanDetail({ slug, jobId, has, onBack }) {
       alert(ex?.data?.detail || 'Failed to delete scan.')
       setDeleting(false)
       setConfirmDel(false)
+    }
+  }
+
+  // Trigger the browser's "save file" flow. We can't use a static <a download>
+  // because the URL depends on the chosen format and credentials need to flow
+  // through fetch().
+  async function doExport(format) {
+    try {
+      const { blob, filename } = await scanApi.exportReport(slug, jobId, format)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (ex) {
+      alert(ex?.data?.detail || 'Failed to export report.')
     }
   }
 
@@ -1005,6 +1659,82 @@ function ScanDetail({ slug, jobId, has, onBack }) {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+          {/* Rescan — only for git-based SAST scans (upload can't be re-run,
+              DAST creds are not stored). Only shown when scan is complete/failed. */}
+          {!isActive && scan.target_type === 'git_url' && has('scans.run') && (
+            <button
+              className="cc-btn cc-btn-md cc-btn-primary"
+              onClick={doRescan}
+              disabled={rescanning}
+              type="button"
+            >
+              {rescanning ? <><span className="cc-spin" /> Running…</> : <>
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M13.5 2.5v4h-4"/><path d="M2.5 8A5.5 5.5 0 0 1 13.1 5.4"/>
+                  <path d="M2.5 13.5v-4h4"/><path d="M13.5 8A5.5 5.5 0 0 1 2.9 10.6"/>
+                </svg>
+                Rescan
+              </>}
+            </button>
+          )}
+          {/* Export — only meaningful once the scan has produced findings */}
+          {!isActive && (
+            <div ref={exportMenuRef} style={{ position: 'relative' }}>
+              <button
+                className="cc-btn cc-btn-md cc-btn-ghost"
+                onClick={() => setExportOpen(o => !o)}
+                type="button"
+              >
+                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M8 2v9M4 7l4 4 4-4M2 13h12"/>
+                </svg>
+                Export
+              </button>
+              {exportOpen && (
+                <div style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 4px)',
+                  right: 0,
+                  background: '#fff',
+                  border: '1px solid #E6EEF6',
+                  borderRadius: 8,
+                  boxShadow: '0 8px 24px rgba(10,22,40,.08)',
+                  minWidth: 180,
+                  overflow: 'hidden',
+                  zIndex: 30,
+                }}>
+                  <button
+                    type="button"
+                    onClick={() => { setExportOpen(false); doExport('html') }}
+                    style={{
+                      display: 'block', width: '100%', textAlign: 'left',
+                      padding: '10px 14px', background: 'none', border: 'none',
+                      cursor: 'pointer', font: '500 13.5px/1.3 var(--font-body)', color: '#0A1628',
+                    }}
+                  >
+                    HTML report
+                    <div style={{ font: '400 11.5px/1.3 var(--font-body)', color: '#8899AA', marginTop: 2 }}>
+                      Printable, ready for PDF
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setExportOpen(false); doExport('json') }}
+                    style={{
+                      display: 'block', width: '100%', textAlign: 'left',
+                      padding: '10px 14px', background: 'none', border: 'none', borderTop: '1px solid #E6EEF6',
+                      cursor: 'pointer', font: '500 13.5px/1.3 var(--font-body)', color: '#0A1628',
+                    }}
+                  >
+                    JSON data
+                    <div style={{ font: '400 11.5px/1.3 var(--font-body)', color: '#8899AA', marginTop: 2 }}>
+                      Raw findings + metadata
+                    </div>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           {isActive && has('scans.manage') && (
             <button className="cc-btn cc-btn-md cc-btn-ghost" onClick={doCancel} disabled={cancelling}>
               {cancelling
