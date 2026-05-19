@@ -1,0 +1,5 @@
+redis>=5.0.0
+SQLAlchemy~=2.0.41
+PyMySQL>=1.1.0
+cryptography>=42.0.0
+psycopg[binary]>=3.1

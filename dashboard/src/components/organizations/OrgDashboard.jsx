@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { orgApi, memberApi, inviteApi, userApi, roleApi, scanApi } from '../../api/endpoints'
 import { TransferOwnershipModal } from './TransferOwnershipModal'
 import { ScansTab } from '../scans/ScansTab'
+import { LogsTab } from '../logs/LogsTab'
+import { ApiKeysSection } from './ApiKeysSection'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -1291,6 +1293,10 @@ function SettingsTab({ org, currentRole, onUpdated, onDeleted }) {
         </div>
       )}
 
+      {/* API keys for the cyberlog Python client. Owner-only — gated already
+          because the whole SettingsTab returns early for non-owners. */}
+      {org.is_active && <ApiKeysSection org={org} />}
+
       {org.is_active && (
         <div className="cc-section cc-section--danger" style={{ marginTop: 16 }}>
           <div className="cc-section-head">Danger zone</div>
@@ -1347,6 +1353,10 @@ const TABS = [
   { id: 'members',  label: 'Members',   visible: ()                       => true },
   { id: 'roles',    label: 'Roles',     visible: ({ has, loaded })        => loaded && (has('roles.view') || has('roles.manage')) },
   { id: 'scans',    label: 'Scans',     visible: ({ has, loaded })        => loaded && (has('scans.view') || has('scans.run')) },
+  // Logs are scoped per-organization and visible to anyone with access to
+  // this workspace. Writing logs requires an API key, which only the owner
+  // can create from the Settings tab.
+  { id: 'logs',     label: 'Logs',      visible: ()                       => true },
   { id: 'settings', label: 'Settings',  visible: ({ role })               => canManageOrg(role) },
 ]
 
@@ -1470,6 +1480,7 @@ export function OrgDashboard({ org: initialOrg, onBack, onOrgChanged, currentUse
       {tab === 'scans' && (has('scans.view') || has('scans.run')) && (
         <ScansTab org={org} has={has} />
       )}
+      {tab === 'logs' && <LogsTab org={org} />}
       {tab === 'settings' && canManageOrg(role) && (
         <SettingsTab
           org={org}

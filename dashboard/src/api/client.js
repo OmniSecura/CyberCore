@@ -4,12 +4,20 @@ const BASE = '/api/v1'
  * Thin fetch wrapper.
  * - Sends credentials (cookies) on every request
  * - Throws an enriched error with { status, data } on non-2xx responses
+ *
+ * `opts.headers` lets callers tack on extra headers (e.g. `X-Org-Id` for
+ * the log-service endpoints which need an explicit org context).
  */
-export async function api(method, path, body) {
+export async function api(method, path, body, opts = {}) {
+  const headers = {
+    ...(body ? { 'Content-Type': 'application/json' } : {}),
+    ...(opts.headers || {}),
+  }
+
   const res = await fetch(BASE + path, {
     method,
     credentials: 'include',           // send httpOnly cookies automatically
-    headers: body ? { 'Content-Type': 'application/json' } : {},
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   })
 
@@ -25,8 +33,8 @@ export async function api(method, path, body) {
   return data
 }
 
-api.get    = (path, body)  => api('GET',    path, body)
-api.post   = (path, body)  => api('POST',   path, body)
-api.patch  = (path, body)  => api('PATCH',  path, body)
-api.put    = (path, body)  => api('PUT',    path, body)
-api.delete = (path, body)  => api('DELETE', path, body)
+api.get    = (path, body, opts)  => api('GET',    path, body, opts)
+api.post   = (path, body, opts)  => api('POST',   path, body, opts)
+api.patch  = (path, body, opts)  => api('PATCH',  path, body, opts)
+api.put    = (path, body, opts)  => api('PUT',    path, body, opts)
+api.delete = (path, body, opts)  => api('DELETE', path, body, opts)

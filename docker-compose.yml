@@ -13,6 +13,7 @@ version: "3.9"
 #    auth        → http://localhost:8000     (FastAPI)
 #    org         → http://localhost:8081     (FastAPI)
 #    scan        → http://localhost:8082     (FastAPI)
+#    log         → http://localhost:8083     (FastAPI — cyberlog ingest + dashboard)
 #    db          → localhost:3306            (MySQL 8.0)
 #    redis       → localhost:6379            (Redis 7)
 #
@@ -266,6 +267,65 @@ services:
     # ZAP daemon takes 10–30 s to fully boot — the runner has its own retry
     # loop so we don't bother with a Compose healthcheck.
 
+  # ── Log service ─────────────────────────────────────────────────────────────
+  # Ingests logs from the `cyberlog` Python client, validates API keys
+  # (cached in Redis DB 2), and pushes entries onto the `cyberlog:queue`
+  # Redis list. The log-consumer drains that list into MySQL log_db.
+  log:
+    build:
+      context: ./services/log-service
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks: [cybercore_net]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *db-env
+      MYSQL_DB: log_db
+      # Redis DB 2 — separate from Celery (0) and auth blacklist (1).
+      REDIS_URL: redis://redis:6379/2
+      LOG_QUEUE_KEY: cyberlog:queue
+      API_KEY_CACHE_TTL: "300"
+      MAX_BATCH_SIZE: "500"
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:80,http://localhost:3000}
+      DB_CREATE_TABLES: "true"
+    ports:
+      - "8083:8083"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8083/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ── Log consumer ────────────────────────────────────────────────────────────
+  # Long-running BRPOP loop on `cyberlog:queue`. Bulk-inserts logs into log_db.
+  # Stateless: scale by spinning up replicas — each one will grab independent
+  # entries off the list.
+  log-consumer:
+    build:
+      context: ./workers/log-consumer
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks: [cybercore_net]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *db-env
+      MYSQL_DB: log_db
+      REDIS_URL: redis://redis:6379/2
+      LOG_QUEUE_KEY: cyberlog:queue
+      CONSUMER_BATCH_SIZE: "100"
+      CONSUMER_BATCH_TIMEOUT: "1.0"
+      BRPOP_TIMEOUT: "5"
+      DB_CREATE_TABLES: "true"
+
   # ════════════════════════════════════════════════════════════════════════════
   #  Frontend
   # ════════════════════════════════════════════════════════════════════════════
@@ -282,6 +342,8 @@ services:
       org:
         condition: service_healthy
       scan:
+        condition: service_healthy
+      log:
         condition: service_healthy
     ports:
       - "80:80"
