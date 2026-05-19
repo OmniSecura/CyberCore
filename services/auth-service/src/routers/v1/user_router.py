@@ -20,6 +20,7 @@ from ...security.JWT import (
 from ...security.token_blacklist import blacklist_token
 from ...services.user_service import UserService
 from ...services.email_service import EmailService
+from ...cyberlog_client import log
 
 auth_router = APIRouter(prefix="/users", tags=["Auth"])
 
@@ -50,17 +51,21 @@ class AuthRouter:
         try:
             user, verify_token = service.create_user(user_data)
         except ValueError:
+            log.warning("Registration failed — email already taken", email=user_data.email)
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Registration failed",
             )
+
+        ulog = log.bind(user_id=str(user.id), email=user.email)
+        ulog.info("User registered")
 
         # Best-effort — do not fail registration if email delivery fails
         try:
             _email_svc.send_welcome(user.email, user.full_name)
             _email_svc.send_verify_email(user.email, user.full_name, verify_token)
         except Exception:
-            pass  # log in production
+            ulog.warning("Welcome email delivery failed")
 
         return {"message": "Account created successfully. Check your email to verify your address."}
 
@@ -80,14 +85,18 @@ class AuthRouter:
             user = service.authenticate(credentials)
         except ValueError as e:
             if "not verified" in str(e):
+                log.warning("Login blocked — email not verified", email=credentials.email)
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Please verify your email before logging in",
                 )
+            log.warning("Login failed — invalid credentials", email=credentials.email)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid credentials",
             )
+
+        log.info("User logged in", user_id=str(user.id), email=user.email)
 
         response = JSONResponse(
             status_code=status.HTTP_200_OK,
@@ -138,6 +147,7 @@ class AuthRouter:
     def logout(self, request: Request):
         """Invalidate both tokens and clear the cookies."""
         blacklist_from_request_cookies(request)
+        log.info("User logged out")
         response = JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Logged out"})
         clear_auth_cookies(response)
         return response
@@ -222,8 +232,10 @@ class AuthRouter:
         except LookupError:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
         except ValueError:
+            log.warning("Account deletion failed — wrong password", user_id=str(current_user.id))
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
+        log.info("Account deleted", user_id=str(current_user.id), email=current_user.email)
         blacklist_from_request_cookies(request)
         response = JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Account deleted"})
         clear_auth_cookies(response)

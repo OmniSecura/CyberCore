@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from ..database.models.ScanJob import ScanJob
 from ..database.models.ScanFinding import ScanFinding
 from ..schemas.scan import SubmitGitScanRequest, SubmitWebScanRequest
+from ..cyberlog_client import log
 
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
@@ -74,6 +75,12 @@ class ScanService:
         ).one()
 
         if (active_count or 0) >= FREE_PLAN_ACTIVE_LIMIT:
+            log.warning(
+                "Quota exceeded — active scan limit",
+                org_id=organization_id,
+                active_count=int(active_count or 0),
+                limit=FREE_PLAN_ACTIVE_LIMIT,
+            )
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail=(
@@ -82,6 +89,12 @@ class ScanService:
                 ),
             )
         if (daily_count or 0) >= FREE_PLAN_DAILY_LIMIT:
+            log.warning(
+                "Quota exceeded — daily scan limit",
+                org_id=organization_id,
+                daily_count=int(daily_count or 0),
+                limit=FREE_PLAN_DAILY_LIMIT,
+            )
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail=(
@@ -121,6 +134,15 @@ class ScanService:
         )
         job.celery_task_id = task.id
         self.db.commit()
+
+        log.info(
+            "Git scan queued",
+            org_id=organization_id,
+            scan_id=job.id,
+            scan_type="sast",
+            created_by=user_id,
+            target=body.target_url,
+        )
         # No second refresh — `expire_on_commit=False` keeps `job` populated and
         # we just assigned celery_task_id locally.
         return job
@@ -202,6 +224,15 @@ class ScanService:
         )
         job.celery_task_id = task.id
         self.db.commit()
+
+        log.info(
+            "Upload scan queued",
+            org_id=organization_id,
+            scan_id=job.id,
+            scan_type="sast",
+            created_by=user_id,
+            size_bytes=written,
+        )
         return job
 
     # ── Submit DAST ────────────────────────────────────────────────────────────
@@ -263,6 +294,17 @@ class ScanService:
         )
         job.celery_task_id = task.id
         self.db.commit()
+
+        log.info(
+            "Web scan queued",
+            org_id=organization_id,
+            scan_id=job.id,
+            scan_type="dast",
+            created_by=user_id,
+            target=body.target_url,
+            profile=body.profile,
+            auth_type=auth_type_label,
+        )
         return job
 
     # ── Read ───────────────────────────────────────────────────────────────────
@@ -619,6 +661,8 @@ class ScanService:
         job.status = "cancelled"
         job.completed_at = datetime.now(tz=timezone.utc)
         self.db.commit()
+
+        log.info("Scan cancelled", org_id=organization_id, scan_id=job_id)
         return job
 
     # ── Delete ─────────────────────────────────────────────────────────────────
@@ -649,3 +693,5 @@ class ScanService:
 
         job.deleted_at = datetime.now(tz=timezone.utc)
         self.db.commit()
+
+        log.info("Scan deleted", org_id=organization_id, scan_id=job_id)
