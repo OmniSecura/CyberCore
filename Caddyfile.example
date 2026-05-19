@@ -1,7 +1,8 @@
+# ── Dashboard + main API ─────────────────────────────────────────────────────
 domain.com {
 
     # Optional: basicauth
-    # to generate pass
+    # to generate pass:
     #   docker run --rm caddy:2-alpine caddy hash-password --plaintext "Pass"
     #
     # basicauth {
@@ -12,8 +13,31 @@ domain.com {
     # Serve dashboard (nginx) and proxy API
     reverse_proxy dashboard:80
 
-    # Logi
     log {
         output file /var/log/caddy/access.log
+    }
+}
+
+# ── Cyberlog SDK ingest endpoint ────────────────────────────────────────────
+# Public surface for the `cyberlog` Python library. Only the two SDK routes
+# are exposed; dashboard-only endpoints stay behind the main domain.
+logs.domain.com {
+
+    handle /api/v1/ingest* {
+        reverse_proxy log:8083
+    }
+    handle /api/v1/auth/validate* {
+        reverse_proxy log:8083
+    }
+    handle /health* {
+        reverse_proxy log:8083
+    }
+
+    handle {
+        respond "Not found" 404
+    }
+
+    log {
+        output file /var/log/caddy/logs-access.log
     }
 }
