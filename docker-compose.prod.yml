@@ -28,6 +28,16 @@ services:
   scan:
     ports: !reset []
 
+  # Log-service — niedostępne bezpośrednio z internetu.
+  # Caddy proxy-uje TYLKO /api/v1/ingest i /api/v1/auth/validate na
+  # logs.omnisecura.pl. Endpointy dashboardu (/logs, /api-keys) chodzą
+  # wewnątrz docker network przez dashboard nginx.
+  log:
+    ports: !reset []
+
+  log-consumer:
+    ports: !reset []
+
   # Dashboard — bez bezpośredniego portu, Caddy robi proxy
   dashboard:
     ports: !reset []
