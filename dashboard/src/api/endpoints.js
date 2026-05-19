@@ -141,3 +141,31 @@ export const emailApi = {
   requestPasswordReset: (email)    => api.post("/email/reset-password/request", { email }),
   confirmPasswordReset: (data)     => api.post("/email/reset-password/confirm", data),
 };
+
+// ── Logs (cyberlog SaaS) ──────────────────────────────────────────────────
+// Every endpoint scopes to a single organization via the `X-Org-Id` header.
+// `orgId` here is the org's UUID (`org.id`), not its slug.
+const orgHeaders = (orgId) => ({ headers: { 'X-Org-Id': orgId } });
+
+export const logApi = {
+  // Returns { items: LogResponse[], total, limit, offset }
+  list: (orgId, { project, level, since, until, limit = 100, offset = 0 } = {}) => {
+    const qs = new URLSearchParams({ limit, offset });
+    if (project) qs.set('project', project);
+    if (level)   qs.set('level', level);
+    if (since)   qs.set('since', since);
+    if (until)   qs.set('until', until);
+    return api.get(`/logs?${qs}`, undefined, orgHeaders(orgId));
+  },
+};
+
+export const apiKeyApi = {
+  // Returns ApiKeyResponse[]
+  list:   (orgId)              => api.get(`/api-keys`, undefined, orgHeaders(orgId)),
+
+  // Returns CreateApiKeyResponse (includes plaintext_key — shown ONCE)
+  // payload: { name, ttl_days }
+  create: (orgId, payload)     => api.post(`/api-keys`, { org_id: orgId, ...payload }, orgHeaders(orgId)),
+
+  revoke: (orgId, keyId)       => api.delete(`/api-keys/${keyId}`, undefined, orgHeaders(orgId)),
+};

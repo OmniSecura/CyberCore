@@ -12,9 +12,12 @@ const SERVICES = {
   "/api/v1/invites":       "http://localhost:8081",  // organization-service (invite accept)
   "/api/v1/users":         "http://localhost:8000",  // auth-service
   "/api/v1/email":         "http://localhost:8000",  // auth-service
+  "/api/v1/logs":          "http://localhost:8083",  // log-service (cyberlog reads)
+  "/api/v1/api-keys":      "http://localhost:8083",  // log-service (cyberlog API keys)
+  "/api/v1/ingest":        "http://localhost:8083",  // log-service (library push)
+  "/api/v1/auth/validate": "http://localhost:8083",  // log-service (library auth check)
   // "/api/v1/agents":     "http://localhost:8082",  // agent-service (future)
   // "/api/v1/alerts":     "http://localhost:8083",  // alert-service (future)
-  // "/api/v1/logs":       "http://localhost:8084",  // log-service   (future)
 };
 
 const proxy = Object.fromEntries(
