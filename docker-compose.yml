@@ -113,6 +113,7 @@ services:
       # CORS — dashboard container is named 'dashboard' and served on port 80
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:80,http://localhost:3000}
       DB_CREATE_TABLES: "true"
+      CYBERLOG_API_KEY: ${CYBERLOG_API_KEY:-}
     ports:
       - "8000:8000"
     healthcheck:
@@ -178,6 +179,7 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/0
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:80,http://localhost:3000}
       DB_CREATE_TABLES: "true"
+      CYBERLOG_API_KEY: ${CYBERLOG_API_KEY:-}
     volumes:
       - scan_uploads:/tmp/cybercore/uploads
     ports:
