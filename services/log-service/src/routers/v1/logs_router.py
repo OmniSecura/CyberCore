@@ -7,11 +7,13 @@ JWT-issued cookie flow used by auth-service; once that middleware is shared
 across services, swap _resolve_org() for the real dependency.
 """
 from datetime import datetime
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from ...database.db_connection import get_db
 from ...schemas.log import LogListResponse, LogResponse
+from ...security.limiter.rate_limit import limiter
+from ...security.limiter import settings
 from ...services.log_service import LogService
 
 logs_router = APIRouter(prefix="/logs")
@@ -27,7 +29,9 @@ def _resolve_org(x_org_id: str | None = Header(default=None)) -> str:
 
 
 @logs_router.get("", response_model=LogListResponse)
+@limiter.limit(settings.GET_LOGS)
 def list_logs(
+    request: Request,
     org_id: str = Depends(_resolve_org),
     project: str | None = Query(default=None),
     level: str | None = Query(default=None),

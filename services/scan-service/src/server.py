@@ -3,6 +3,7 @@ import os
 from fastapi import FastAPI
 from fastapi.openapi.docs import get_swagger_ui_html
 from starlette.middleware.cors import CORSMiddleware
+from slowapi.middleware import SlowAPIMiddleware
 
 from .global_settings import APP_NAME, APP_DESCRIPTION, APP_VERSION, ALLOWED_ORIGINS
 from .routers.api_router import api_router
@@ -12,6 +13,7 @@ from .database.models.ScanJob import ScanJob          # noqa: F401 — must be i
 from .database.models.ScanFinding import ScanFinding  # noqa: F401
 from .security.http_client import close_clients
 from .security.headers_middleware import SecurityHeadersMiddleware
+from .security.limiter.rate_limit import limiter, RateLimitExceeded, _rate_limit_exceeded_handler
 
 
 def create_app() -> FastAPI:
@@ -30,6 +32,10 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
         allow_credentials=True,
     )
+
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_middleware(SlowAPIMiddleware)
 
     # Defense-in-depth response headers — closes the X-Content-Type-Options,
     # X-Frame-Options, Referrer-Policy, Permissions-Policy findings that ZAP

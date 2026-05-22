@@ -4,7 +4,7 @@ Dashboard-facing endpoints for managing organization API keys.
 Same auth caveat as logs_router: the caller passes `X-Org-Id`; replace with
 real JWT middleware once shared.
 """
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from ...database.db_connection import get_db
@@ -13,6 +13,8 @@ from ...schemas.api_key import (
     CreateApiKeyRequest,
     CreateApiKeyResponse,
 )
+from ...security.limiter.rate_limit import limiter
+from ...security.limiter import settings
 from ...services.api_key_service import ApiKeyService
 
 api_keys_router = APIRouter(prefix="/api-keys")
@@ -32,12 +34,13 @@ def _resolve_org(x_org_id: str | None = Header(default=None)) -> str:
     response_model=CreateApiKeyResponse,
     status_code=status.HTTP_201_CREATED,
 )
+@limiter.limit(settings.POST_API_KEYS)
 def create_api_key(
+    request: Request,
     payload: CreateApiKeyRequest,
     caller_org: str = Depends(_resolve_org),
     db: Session = Depends(get_db),
 ) -> CreateApiKeyResponse:
-    # Guard against a caller creating keys for a different org.
     if payload.org_id != caller_org:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -65,7 +68,9 @@ def create_api_key(
 
 
 @api_keys_router.get("", response_model=list[ApiKeyResponse])
+@limiter.limit(settings.GET_API_KEYS)
 def list_api_keys(
+    request: Request,
     org_id: str = Depends(_resolve_org),
     db: Session = Depends(get_db),
 ) -> list[ApiKeyResponse]:
@@ -75,7 +80,9 @@ def list_api_keys(
 
 
 @api_keys_router.delete("/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit(settings.DELETE_API_KEYS)
 def revoke_api_key(
+    request: Request,
     key_id: str,
     org_id: str = Depends(_resolve_org),
     db: Session = Depends(get_db),

@@ -11,3 +11,4 @@ python-multipart==0.0.20
 redis>=5.0.0
 PyMySQL>=1.1.0
 cryptography>=42.0.0
+slowapi

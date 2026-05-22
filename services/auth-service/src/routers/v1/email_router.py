@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi_utils.cbv import cbv
 from sqlalchemy.orm import Session
 
@@ -8,6 +8,8 @@ from ...schemas.email import (
     RequestPasswordResetRequest,
     ResetPasswordRequest,
 )
+from ...security.limiter.rate_limit import limiter
+from ...security.limiter import settings
 from ...services.user_service import UserService
 from ...services.email_service import EmailService
 
@@ -26,17 +28,13 @@ class EmailRouter:
     # ── Verify email ──────────────────────────────────────────────────────────
 
     @email_router.post("/verify", status_code=status.HTTP_200_OK)
+    @limiter.limit(settings.POST_EMAIL_VERIFY)
     def verify_email(
         self,
+        request: Request,
         body: VerifyEmailRequest,
         service: UserService = Depends(_get_service),
     ):
-        """
-        Consume an email-verification token sent to the user's inbox.
-
-        The frontend extracts the token from the URL query param and POSTs it here.
-        Returns 400 on invalid / expired token — always the same generic message.
-        """
         try:
             service.verify_email(body.token)
         except LookupError:
@@ -49,17 +47,13 @@ class EmailRouter:
     # ── Request password reset ────────────────────────────────────────────────
 
     @email_router.post("/reset-password/request", status_code=status.HTTP_200_OK)
+    @limiter.limit(settings.POST_EMAIL_RESET_PASSWORD_REQUEST)
     def request_password_reset(
         self,
+        request: Request,
         body: RequestPasswordResetRequest,
         service: UserService = Depends(_get_service),
     ):
-        """
-        Trigger a password-reset email.
-
-        Always returns 200 — never confirm whether the email is registered.
-        Token is valid for 1 hour.
-        """
         result = service.request_password_reset(body.email)
 
         if result:
@@ -67,25 +61,20 @@ class EmailRouter:
             try:
                 _email_svc.send_reset_password(user.email, user.full_name, token)
             except Exception:
-                pass  # log in production
+                pass
 
-        # Identical response regardless of whether email exists
         return {"message": "If that email is registered, a reset link has been sent"}
 
     # ── Confirm password reset ────────────────────────────────────────────────
 
     @email_router.post("/reset-password/confirm", status_code=status.HTTP_200_OK)
+    @limiter.limit(settings.POST_EMAIL_RESET_PASSWORD_CONFIRM)
     def confirm_password_reset(
         self,
+        request: Request,
         body: ResetPasswordRequest,
         service: UserService = Depends(_get_service),
     ):
-        """
-        Consume a password-reset token and set the new password.
-
-        Returns 400 on invalid / expired token.
-        Returns 422 if the new password fails validation rules.
-        """
         try:
             service.reset_password(body)
         except LookupError:

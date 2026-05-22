@@ -3,6 +3,7 @@ import os
 from fastapi import FastAPI
 from fastapi.openapi.docs import get_swagger_ui_html
 from starlette.middleware.cors import CORSMiddleware
+from slowapi.middleware import SlowAPIMiddleware
 
 from .global_settings import (
     APP_NAME,
@@ -13,6 +14,7 @@ from .global_settings import (
 from .routers.api_router import api_router
 from .database.db_connection import _connector
 from .database.models.Base import Base
+from .security.limiter.rate_limit import limiter, RateLimitExceeded, _rate_limit_exceeded_handler
 
 
 def create_app() -> FastAPI:
@@ -31,6 +33,10 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
         allow_credentials=True,
     )
+
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_middleware(SlowAPIMiddleware)
 
     @app.get("/", include_in_schema=False)
     @app.get("/docs", include_in_schema=False)

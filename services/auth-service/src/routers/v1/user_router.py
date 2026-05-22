@@ -18,6 +18,8 @@ from ...security.JWT import (
     set_auth_cookies,
 )
 from ...security.token_blacklist import blacklist_token
+from ...security.limiter.rate_limit import limiter
+from ...security.limiter import settings
 from ...services.user_service import UserService
 from ...services.email_service import EmailService
 from ...cyberlog_client import log
@@ -37,17 +39,13 @@ class AuthRouter:
     # ── Register ──────────────────────────────────────────────────────────────
 
     @auth_router.post("/register", status_code=status.HTTP_201_CREATED)
+    @limiter.limit(settings.POST_USERS_REGISTER)
     def register(
         self,
+        request: Request,
         user_data: CreateUser,
         service: UserService = Depends(_get_service),
     ):
-        """
-        Create a new account.
-        Sends a welcome email and an email-verification link.
-        Returns only a success message — no user data, no tokens.
-        The user must log in separately after registering.
-        """
         try:
             user, verify_token = service.create_user(user_data)
         except ValueError:
@@ -60,7 +58,6 @@ class AuthRouter:
         ulog = log.bind(user_id=str(user.id), email=user.email)
         ulog.info("User registered")
 
-        # Best-effort — do not fail registration if email delivery fails
         try:
             _email_svc.send_welcome(user.email, user.full_name)
             _email_svc.send_verify_email(user.email, user.full_name, verify_token)
@@ -72,15 +69,13 @@ class AuthRouter:
     # ── Login ─────────────────────────────────────────────────────────────────
 
     @auth_router.post("/login", status_code=status.HTTP_200_OK)
+    @limiter.limit(settings.POST_USERS_LOGIN)
     def login(
         self,
+        request: Request,
         credentials: LoginRequest,
         service: UserService = Depends(_get_service),
     ):
-        """
-        Authenticate with email + password.
-        Tokens are written into httpOnly cookies — client never sees the values.
-        """
         try:
             user = service.authenticate(credentials)
         except ValueError as e:
@@ -108,12 +103,8 @@ class AuthRouter:
     # ── Refresh ───────────────────────────────────────────────────────────────
 
     @auth_router.post("/refresh", status_code=status.HTTP_200_OK)
+    @limiter.limit(settings.POST_USERS_REFRESH)
     def refresh(self, request: Request, db: Session = Depends(get_db)):
-        """
-        Issue a new access token using the refresh-token cookie.
-        Normally handled automatically by AutoRefreshMiddleware.
-        """
-
         refresh_token = request.cookies.get(_REFRESH_COOKIE)
         if not refresh_token:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
@@ -144,6 +135,7 @@ class AuthRouter:
     # ── Logout ────────────────────────────────────────────────────────────────
 
     @auth_router.post("/logout", status_code=status.HTTP_200_OK)
+    @limiter.limit(settings.POST_USERS_LOGOUT)
     def logout(self, request: Request):
         """Invalidate both tokens and clear the cookies."""
         blacklist_from_request_cookies(request)
@@ -155,28 +147,24 @@ class AuthRouter:
     # ── Me ────────────────────────────────────────────────────────────────────
 
     @auth_router.get("/me", status_code=status.HTTP_200_OK, response_model=UserResponse)
-    def get_me(self, current_user: User = Depends(get_current_user)):
+    @limiter.limit(settings.GET_USERS_ME)
+    def get_me(self, request: Request, current_user: User = Depends(get_current_user)):
         """Return the current user's profile (safe fields only)."""
         return current_user
 
     # ── Bulk lookup ───────────────────────────────────────────────────────────
 
     @auth_router.post("/lookup", status_code=status.HTTP_200_OK, response_model=list[PublicUser])
+    @limiter.limit(settings.POST_USERS_LOOKUP)
     def lookup_users(
         self,
+        request: Request,
         body: UserLookupRequest,
         db: Session = Depends(get_db),
         _current: User = Depends(get_current_user),
     ):
-        """
-        Resolve a batch of user IDs into public profile info (id, email, full_name).
-        Requires an authenticated session — used by other services / the UI to
-        render member rows with real names instead of UUIDs.
-        Unknown / soft-deleted IDs are silently skipped.
-        """
         if not body.ids:
             return []
-        # Cap input to keep this cheap.
         ids = list({str(i) for i in body.ids})[:200]
         users = (
             db.query(User)
@@ -188,15 +176,13 @@ class AuthRouter:
     # ── Resend verification ───────────────────────────────────────────────────
 
     @auth_router.post("/me/resend-verification", status_code=status.HTTP_200_OK)
+    @limiter.limit(settings.POST_USERS_ME_RESEND_VERIFICATION)
     def resend_verification(
         self,
+        request: Request,
         service: UserService = Depends(_get_service),
         current_user: User = Depends(get_current_user),
     ):
-        """
-        Re-send the email-verification link.
-        Returns 400 if the email is already verified.
-        """
         try:
             token = service.resend_verification(current_user)
         except ValueError:
@@ -215,6 +201,7 @@ class AuthRouter:
     # ── Delete own account ────────────────────────────────────────────────────
 
     @auth_router.delete("/me", status_code=status.HTTP_200_OK)
+    @limiter.limit(settings.DELETE_USERS_ME)
     def delete_my_account(
         self,
         request: Request,
@@ -222,11 +209,6 @@ class AuthRouter:
         service: UserService = Depends(_get_service),
         current_user: User = Depends(get_current_user),
     ):
-        """
-        Soft-delete the authenticated user's own account.
-        Requires the current password in the request body.
-        Invalidates both tokens immediately.
-        """
         try:
             service.soft_delete_user(current_user.id, body.password)
         except LookupError:
@@ -244,8 +226,10 @@ class AuthRouter:
     # ── Admin: delete any user ────────────────────────────────────────────────
 
     @auth_router.delete("/admin/{user_id}", status_code=status.HTTP_200_OK)
+    @limiter.limit(settings.DELETE_USERS_ADMIN)
     def admin_delete_user(
         self,
+        request: Request,
         user_id: str,
         service: UserService = Depends(_get_service),
         _: User = Depends(require_superadmin),

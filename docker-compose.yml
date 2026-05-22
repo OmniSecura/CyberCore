@@ -101,6 +101,7 @@ services:
       MYSQL_DB: auth_db
       # Redis DB 1 — separate from Celery to avoid key collisions
       REDIS_URL: redis://redis:6379/1
+      RATE_LIMIT_STORAGE_URI: redis://redis:6379/3
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set in .env}
       # Email (SMTP)
       SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
@@ -138,6 +139,7 @@ services:
       <<: *db-env
       MYSQL_DB: org_db
       AUTH_SERVICE_URL: http://auth:8000
+      RATE_LIMIT_STORAGE_URI: redis://redis:6379/3
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:80,http://localhost:3000}
       DB_CREATE_TABLES: "true"
       SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
@@ -177,6 +179,7 @@ services:
       ORG_SERVICE_URL: http://org:8081
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
+      RATE_LIMIT_STORAGE_URI: redis://redis:6379/3
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:80,http://localhost:3000}
       DB_CREATE_TABLES: "true"
       CYBERLOG_API_KEY: ${CYBERLOG_API_KEY:-}
@@ -289,6 +292,7 @@ services:
       MYSQL_DB: log_db
       # Redis DB 2 — separate from Celery (0) and auth blacklist (1).
       REDIS_URL: redis://redis:6379/2
+      RATE_LIMIT_STORAGE_URI: redis://redis:6379/3
       LOG_QUEUE_KEY: cyberlog:queue
       API_KEY_CACHE_TTL: "300"
       MAX_BATCH_SIZE: "500"

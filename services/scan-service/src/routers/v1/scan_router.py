@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import os
 from typing import Optional
 
@@ -22,6 +20,8 @@ from ...security.cache import org_id_cache
 from ...security.http_client import get_org_service_client
 from ...security.org_privilege import require_org_privilege
 from ...security.current_user import get_current_user_id
+from ...security.limiter.rate_limit import limiter
+from ...security.limiter import settings
 from ...services.scan_service import ScanService
 
 scan_router = APIRouter(prefix="/scans",tags=["Scans"])
@@ -71,6 +71,7 @@ def _svc(db: Session = Depends(get_db)) -> ScanService:
     status_code=status.HTTP_202_ACCEPTED,
     response_model=ScanJobOut,
 )
+@limiter.limit(settings.POST_SCANS_GIT)
 async def submit_git_scan(
     slug: str,
     request: Request,
@@ -90,6 +91,7 @@ async def submit_git_scan(
     status_code=status.HTTP_202_ACCEPTED,
     response_model=ScanJobOut,
 )
+@limiter.limit(settings.POST_SCANS_WEB)
 async def submit_web_scan(
     slug: str,
     request: Request,
@@ -109,6 +111,7 @@ async def submit_web_scan(
     status_code=status.HTTP_202_ACCEPTED,
     response_model=ScanJobOut,
 )
+@limiter.limit(settings.POST_SCANS_UPLOAD)
 async def submit_upload_scan(
     slug: str,
     request: Request,
@@ -130,6 +133,7 @@ async def submit_upload_scan(
     "/organizations/{slug}/scans",
     response_model=ScanJobListOut,
 )
+@limiter.limit(settings.GET_SCANS)
 async def list_scans(
     slug: str,
     request: Request,
@@ -150,6 +154,7 @@ async def list_scans(
     "/organizations/{slug}/scans/summary",
     response_model=OrgSummaryOut,
 )
+@limiter.limit(settings.GET_SCANS_SUMMARY)
 async def org_summary(
     slug: str,
     request: Request,
@@ -172,6 +177,7 @@ async def org_summary(
     "/organizations/{slug}/scans/stats",
     response_model=ScanStatusCountsOut,
 )
+@limiter.limit(settings.GET_SCANS_STATS)
 async def scan_stats(
     slug: str,
     request: Request,
@@ -188,6 +194,7 @@ async def scan_stats(
     "/organizations/{slug}/scans/{job_id}",
     response_model=ScanJobDetailOut,
 )
+@limiter.limit(settings.GET_SCANS_DETAIL)
 async def get_scan(
     slug: str,
     job_id: str,
@@ -205,6 +212,7 @@ async def get_scan(
     "/organizations/{slug}/scans/{job_id}/findings",
     response_model=FindingsListOut,
 )
+@limiter.limit(settings.GET_SCANS_FINDINGS)
 async def list_findings(
     slug: str,
     job_id: str,
@@ -233,6 +241,7 @@ async def list_findings(
 @scan_router.get(
     "/organizations/{slug}/scans/{job_id}/export",
 )
+@limiter.limit(settings.GET_SCANS_EXPORT)
 async def export_findings(
     slug: str,
     job_id: str,
@@ -261,6 +270,7 @@ async def export_findings(
     "/organizations/{slug}/scans/{job_id}/cancel",
     response_model=ScanJobOut,
 )
+@limiter.limit(settings.POST_SCANS_CANCEL)
 async def cancel_scan(
     slug: str,
     job_id: str,
@@ -278,6 +288,7 @@ async def cancel_scan(
     "/organizations/{slug}/scans/{job_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
+@limiter.limit(settings.DELETE_SCANS)
 async def delete_scan(
     slug: str,
     job_id: str,

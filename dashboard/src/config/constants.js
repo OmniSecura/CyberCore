@@ -13,4 +13,4 @@ export const URLS = {
   vulnerability: 'mailto:security@cybercore.dev',
 }
 
-export const APP_VERSION = 'v0.0.4'
+export const APP_VERSION = 'v0.0.5'
