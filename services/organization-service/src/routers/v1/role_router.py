@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi_utils.cbv import cbv
 from sqlalchemy.orm import Session
 
 from ...database.db_connection import get_db
 from ...database.models.Organization import Organization
 from ...security.auth_client import get_current_user
+from ...security.limiter.rate_limit import limiter
+from ...security.limiter import settings
 from ...services.role_service import RoleService
 from ...schemas.role import CreateRoleRequest, UpdateRoleRequest, RoleResponse
 from ...privileges import get_registry_for_api, get_user_privileges
@@ -28,13 +30,16 @@ def _get_active_org(db: Session, slug: str) -> Organization:
 
 
 @role_router.get("/privileges", status_code=status.HTTP_200_OK)
-async def list_privileges():
+@limiter.limit(settings.GET_ROLES_PRIVILEGES)
+async def list_privileges(request: Request):
     """Returns all available privileges grouped by category."""
     return get_registry_for_api()
 
 
 @role_router.get("/{slug}/my-privileges", status_code=status.HTTP_200_OK)
+@limiter.limit(settings.GET_ROLES_MY_PRIVILEGES)
 async def my_privileges(
+    request: Request,
     slug: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -52,8 +57,10 @@ async def my_privileges(
 class RoleRouter:
 
     @role_router.get("/{slug}", status_code=status.HTTP_200_OK)
+    @limiter.limit(settings.GET_ROLES)
     async def list_roles(
         self,
+        request: Request,
         slug: str,
         current_user: dict = Depends(get_current_user),
         service: RoleService = Depends(_role_svc),
@@ -67,8 +74,10 @@ class RoleRouter:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
 
     @role_router.post("/{slug}", status_code=status.HTTP_201_CREATED)
+    @limiter.limit(settings.POST_ROLES)
     async def create_role(
         self,
+        request: Request,
         slug: str,
         data: CreateRoleRequest,
         current_user: dict = Depends(get_current_user),
@@ -92,8 +101,10 @@ class RoleRouter:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
     @role_router.patch("/{slug}/{role_id}", status_code=status.HTTP_200_OK)
+    @limiter.limit(settings.PATCH_ROLES)
     async def update_role(
         self,
+        request: Request,
         slug: str,
         role_id: str,
         data: UpdateRoleRequest,
@@ -119,8 +130,10 @@ class RoleRouter:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
     @role_router.delete("/{slug}/{role_id}", status_code=status.HTTP_200_OK)
+    @limiter.limit(settings.DELETE_ROLES)
     async def delete_role(
         self,
+        request: Request,
         slug: str,
         role_id: str,
         current_user: dict = Depends(get_current_user),

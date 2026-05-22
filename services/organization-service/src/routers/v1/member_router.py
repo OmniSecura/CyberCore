@@ -1,9 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi_utils.cbv import cbv
 from sqlalchemy.orm import Session
 
 from ...database.db_connection import get_db
 from ...security.auth_client import get_current_user
+from ...security.limiter.rate_limit import limiter
+from ...security.limiter import settings
 from ...services.member_service import MemberService
 from ...services.invite_service import InviteService
 from ...schemas.member import (
@@ -32,8 +34,10 @@ def _invite_svc(db: Session = Depends(get_db)) -> InviteService:
 class MemberRouter:
 
     @member_router.get("/{slug}/members", status_code=status.HTTP_200_OK)
+    @limiter.limit(settings.GET_ORGANIZATIONS_MEMBERS)
     async def list_members(
         self,
+        request: Request,
         slug: str,
         current_user: dict = Depends(get_current_user),
         service: MemberService = Depends(_member_svc),
@@ -47,8 +51,10 @@ class MemberRouter:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
 
     @member_router.patch("/{slug}/members/{user_id}", status_code=status.HTTP_200_OK)
+    @limiter.limit(settings.PATCH_ORGANIZATIONS_MEMBERS)
     async def update_member_role(
         self,
+        request: Request,
         slug: str,
         user_id: str,
         data: UpdateMemberRoleRequest,
@@ -72,8 +78,10 @@ class MemberRouter:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
     @member_router.delete("/{slug}/members/{user_id}", status_code=status.HTTP_200_OK)
+    @limiter.limit(settings.DELETE_ORGANIZATIONS_MEMBERS)
     async def remove_member(
         self,
+        request: Request,
         slug: str,
         user_id: str,
         current_user: dict = Depends(get_current_user),
@@ -90,14 +98,14 @@ class MemberRouter:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
         except PermissionError as e:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
-        except ValueError as e:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
     # ── Invites (org-scoped) ───────────────────────────────────────────────────
 
     @member_router.post("/{slug}/invites", status_code=status.HTTP_201_CREATED)
+    @limiter.limit(settings.POST_ORGANIZATIONS_INVITES)
     async def create_invite(
         self,
+        request: Request,
         slug: str,
         data: InviteRequest,
         current_user: dict = Depends(get_current_user),
@@ -120,8 +128,10 @@ class MemberRouter:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
     @member_router.get("/{slug}/invites", status_code=status.HTTP_200_OK)
+    @limiter.limit(settings.GET_ORGANIZATIONS_INVITES)
     async def list_invites(
         self,
+        request: Request,
         slug: str,
         current_user: dict = Depends(get_current_user),
         service: InviteService = Depends(_invite_svc),
@@ -135,8 +145,10 @@ class MemberRouter:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
 
     @member_router.delete("/{slug}/invites/{invite_id}", status_code=status.HTTP_200_OK)
+    @limiter.limit(settings.DELETE_ORGANIZATIONS_INVITES)
     async def revoke_invite(
         self,
+        request: Request,
         slug: str,
         invite_id: str,
         current_user: dict = Depends(get_current_user),
@@ -161,8 +173,10 @@ class MemberRouter:
 class InviteRouter:
 
     @invite_router.post("/accept", status_code=status.HTTP_200_OK)
+    @limiter.limit(settings.POST_INVITES_ACCEPT)
     async def accept_invite(
         self,
+        request: Request,
         data: AcceptInviteRequest,
         current_user: dict = Depends(get_current_user),
         service: InviteService = Depends(_invite_svc),

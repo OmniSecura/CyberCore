@@ -6,11 +6,13 @@ Authenticates the request via API key, validates the batch, and pushes
 every entry onto the Redis queue. The actual DB write is performed
 asynchronously by log-consumer.
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from ...global_settings import MAX_BATCH_SIZE
 from ...schemas.log import IngestRequest, IngestResponse
 from ...security.api_key_auth import AuthContext, require_api_key
+from ...security.limiter.rate_limit import limiter
+from ...security.limiter import settings
 from ...services import log_queue
 
 ingest_router = APIRouter(prefix="/ingest")
@@ -21,7 +23,9 @@ ingest_router = APIRouter(prefix="/ingest")
     response_model=IngestResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
+@limiter.limit(settings.POST_INGEST)
 def ingest_logs(
+    request: Request,
     payload: IngestRequest,
     ctx: AuthContext = Depends(require_api_key),
 ) -> IngestResponse:
@@ -37,8 +41,6 @@ def ingest_logs(
             detail=f"Batch too large (max {MAX_BATCH_SIZE} entries per request).",
         )
 
-    # Stamp every entry with the org_id resolved from the API key so the
-    # consumer doesn't have to re-authenticate.
     serialised = [
         {
             "org_id":    ctx.org_id,
@@ -53,8 +55,6 @@ def ingest_logs(
 
     accepted = log_queue.enqueue(serialised)
     if accepted == 0:
-        # Redis is unreachable — surface to the client so they retry instead
-        # of silently dropping logs.
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Log queue temporarily unavailable. Please retry.",

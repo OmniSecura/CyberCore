@@ -14,3 +14,5 @@ argon2-cffi==25.1
 websockets==15.0.1
 python-multipart==0.0.20
 jinja2
+slowapi
+redis>=5.0.0

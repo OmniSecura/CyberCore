@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session
 from ...database.db_connection import get_db
 from ...global_settings import MAX_FREE_ORGS_PER_OWNER
 from ...security.auth_client import get_current_user
+from ...security.limiter.rate_limit import limiter
+from ...security.limiter import settings
 from ...services.organization_service import OrgService
 from ...schemas.organization import (
     AcceptOwnershipTransferRequest,
@@ -30,8 +32,10 @@ class OrganizationRouter:
     # ── Create ────────────────────────────────────────────────────────────────
 
     @org_router.post("/", status_code=status.HTTP_201_CREATED)
+    @limiter.limit(settings.POST_ORGANIZATIONS)
     async def create_org(
         self,
+        request: Request,
         data: CreateOrganizationRequest,
         current_user: dict = Depends(get_current_user),
         service: OrgService = Depends(_get_service),
@@ -45,8 +49,10 @@ class OrganizationRouter:
     # ── List my orgs ──────────────────────────────────────────────────────────
 
     @org_router.get("/my", status_code=status.HTTP_200_OK, response_model=PaginatedOrganizationsResponse)
+    @limiter.limit(settings.GET_ORGANIZATIONS_MY)
     async def get_my_orgs(
         self,
+        request: Request,
         page: int = Query(1, ge=1),
         page_size: int = Query(20, ge=1, le=100),
         current_user: dict = Depends(get_current_user),
@@ -70,13 +76,12 @@ class OrganizationRouter:
         )
 
     # ── Free-plan ownership cap status ────────────────────────────────────────
-    # Lets the UI surface usage and disable create/reactivate buttons before the
-    # user submits a request that would be rejected with 409.
-    # NOTE: registered before `/{slug}` so it isn't captured by that catch-all.
 
     @org_router.get("/free-cap-status", status_code=status.HTTP_200_OK, response_model=FreeCapStatusResponse)
+    @limiter.limit(settings.GET_ORGANIZATIONS_FREE_CAP_STATUS)
     async def get_free_cap_status(
         self,
+        request: Request,
         current_user: dict = Depends(get_current_user),
         service: OrgService = Depends(_get_service),
     ):
@@ -90,8 +95,10 @@ class OrganizationRouter:
     # ── Get single org ────────────────────────────────────────────────────────
 
     @org_router.get("/{slug}", status_code=status.HTTP_200_OK, response_model=OrganizationResponse)
+    @limiter.limit(settings.GET_ORGANIZATIONS_SLUG)
     async def get_org(
         self,
+        request: Request,
         slug: str,
         current_user: dict = Depends(get_current_user),
         service: OrgService = Depends(_get_service),
@@ -110,8 +117,10 @@ class OrganizationRouter:
     # ── Update ────────────────────────────────────────────────────────────────
 
     @org_router.patch("/{slug}", status_code=status.HTTP_200_OK)
+    @limiter.limit(settings.PATCH_ORGANIZATIONS_SLUG)
     async def update_org(
         self,
+        request: Request,
         slug: str,
         data: UpdateOrganizationRequest,
         current_user: dict = Depends(get_current_user),
@@ -130,8 +139,10 @@ class OrganizationRouter:
     # ── Soft delete ───────────────────────────────────────────────────────────
 
     @org_router.delete("/{slug}", status_code=status.HTTP_200_OK)
+    @limiter.limit(settings.DELETE_ORGANIZATIONS_SLUG)
     async def soft_delete_org(
         self,
+        request: Request,
         slug: str,
         current_user: dict = Depends(get_current_user),
         service: OrgService = Depends(_get_service),
@@ -145,11 +156,12 @@ class OrganizationRouter:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
 
     # ── Transfer ownership ────────────────────────────────────────────────────
-    # Two-step: owner initiates → email sent → recipient accepts via token.
 
     @org_router.patch("/{slug}/transfer-ownership", status_code=status.HTTP_200_OK)
+    @limiter.limit(settings.PATCH_ORGANIZATIONS_TRANSFER_OWNERSHIP)
     async def transfer_ownership(
         self,
+        request: Request,
         slug: str,
         data: TransferOwnershipRequest,
         current_user: dict = Depends(get_current_user),
@@ -170,8 +182,10 @@ class OrganizationRouter:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
     @org_router.post("/transfer-ownership/accept", status_code=status.HTTP_200_OK)
+    @limiter.limit(settings.POST_ORGANIZATIONS_TRANSFER_OWNERSHIP_ACCEPT)
     async def accept_transfer_ownership(
         self,
+        request: Request,
         data: AcceptOwnershipTransferRequest,
         current_user: dict = Depends(get_current_user),
         service: OrgService = Depends(_get_service),
@@ -194,12 +208,12 @@ class OrganizationRouter:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
     # ── Reactivate ────────────────────────────────────────────────────────────
-    # User must provide a new slug if the original one was taken after deletion.
-    # If new_slug is not provided, we attempt to restore the original slug.
 
     @org_router.post("/{org_id}/reactivate", status_code=status.HTTP_200_OK)
+    @limiter.limit(settings.POST_ORGANIZATIONS_REACTIVATE)
     async def reactivate_org(
         self,
+        request: Request,
         org_id: str,
         data: ReactivateOrganizationRequest,
         current_user: dict = Depends(get_current_user),
@@ -220,5 +234,4 @@ class OrganizationRouter:
         except PermissionError as e:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
         except ValueError as e:
-            # Slug conflict — tell the user to pick a different one
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))

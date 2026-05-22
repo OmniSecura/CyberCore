@@ -1,5 +1,6 @@
 fastapi
 fastapi-utils
+slowapi>=0.1.9
 sqlmodel
 pydantic
 SQLAlchemy
