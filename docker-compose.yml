@@ -269,6 +269,8 @@ services:
       -config api.addrs.addr.name=.*
       -config api.addrs.addr.regex=true
       -config api.disablekey=false
+    healthcheck:
+      test: ["NONE"]
     # ZAP daemon takes 10–30 s to fully boot — the runner has its own retry
     # loop so we don't bother with a Compose healthcheck.
 
