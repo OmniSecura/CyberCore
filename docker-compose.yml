@@ -351,5 +351,5 @@ services:
         condition: service_healthy
       log:
         condition: service_healthy
-    ports:
-      - "80:80"
+    expose:
+      - "80"
